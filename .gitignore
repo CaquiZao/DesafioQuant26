@@ -1,0 +1,13 @@
+# Dados pesados
+*.TXT
+*.txt
+*.csv
+*.zip
+
+# Segredos
+.env
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
