@@ -3,6 +3,9 @@
 *.txt
 *.csv
 *.zip
+*.parquet
+*.png
+data/
 
 # Segredos
 .env
