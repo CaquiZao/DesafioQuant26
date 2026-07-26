@@ -23,9 +23,15 @@ import yfinance as yf
 # 1) CONFIGURACOES GERAIS (fica tudo no topo pra ser facil de mudar)
 # ------------------------------------------------------------------
 
-# Lista de tickers que queremos baixar. Comecando com so 2 para testar.
-# Depois que o script estiver funcionando, e so acrescentar mais nomes aqui.
-TICKERS = ["PETR4", "VALE3"]
+# Lendo os tickers diretamente do grafo para garantir que a base de dados cubra nosso teste
+try:
+    caminho_grafo = os.path.join(os.path.dirname(__file__), '..', '..', 'fase 4 - sinal da sinapse', 'grafo_manual_base.csv')
+    df_grafo = pd.read_csv(caminho_grafo)
+    TICKERS = list(set(df_grafo['empresa_A'].tolist() + df_grafo['empresa_B'].tolist()))
+    TICKERS.sort()
+except Exception as e:
+    print(f"Aviso: Não encontrou o grafo. Usando fallback. Erro: {e}")
+    TICKERS = ["PETR4", "VALE3"]
 
 # Periodo fixo de dados que queremos baixar.
 DATA_INICIO = "2016-01-01"

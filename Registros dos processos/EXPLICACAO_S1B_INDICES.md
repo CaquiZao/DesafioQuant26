@@ -24,9 +24,9 @@ Enquanto o `s1_precos.py` baixa os retornos dos "jogadores" em campo (ações in
 ## 3. O que exatamente o script faz?
 Ele usa o Yahoo Finance para extrair as séries históricas diárias (de 2016 até hoje) dos seguintes "termômetros" do mercado brasileiro:
 *   **A Régua do Mercado Total:** O índice Ibovespa em si (`^BVSP`), que nos dá a pontuação diária.
-*   **As Réguas Setoriais (ETFs):** Usamos ETFs reais negociados na B3 que acompanham os setores perfeitamente (ex: `FIND11` para Bancos/Financeiro, `MATB11` para Siderurgia/Mineração). 
+*   **As Réguas Setoriais (Índices Sintéticos):** *[Atualização de Rota]* Inicialmente pensamos em usar ETFs (como FIND11), mas percebemos que a B3 não possui ETFs líquidos para todos os setores. Não ter os dados do setor para **todas** as ações da carteira vai "sujar" o nosso sinal. Se não descontarmos o setor, um evento que afetou todas as empresas de Varejo vai ser interpretado pelo nosso modelo como um "choque exclusivo da Lojas Renner", disparando um alarme falso na rede do nosso Grafo (o famoso *Garbage In, Garbage Out*).
 
-Ele baixa esses números dia a dia, calcula a variação percentual diária (se o índice subiu 1% ou caiu 2%) e salva em um arquivo blindado e limpo chamado `indices_retornos.parquet`.
+Para resolver isso, decidimos fabricar os nossos próprios **Índices Setoriais Sintéticos**. Criamos um arquivo `mapeamento_setores.csv` que cruza os tickers das ações mais líquidas do nosso Universo (Bloco 2) com seus respectivos setores. O script do Bloco 4 agrupará essas ações e calculará a média diária de retorno, criando uma régua setorial blindada, com 100% de cobertura.
 
 ## 4. O Pulo do Gato: Por que NÃO precisamos da Composição Histórica do IBOV?
 É muito comum em competições Quant os grupos se desesperarem tentando encontrar a planilha da B3 com **quais** as 80 ações que compunham o Ibovespa no ano de 2018. Não é possível baixar isso sem pagar ferramentas caríssimas, o que gera o famoso e letal erro de *Survivorship Bias* (viés de sobrevivência).

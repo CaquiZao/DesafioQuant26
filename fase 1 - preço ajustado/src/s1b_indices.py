@@ -25,9 +25,7 @@ import yfinance as yf
 # BOVA11.SA = ETF do Ibovespa (Usado como redundância caso o ^BVSP falhe)
 TICKERS_INDICES = {
     "IBOV": "^BVSP",
-    "IBOV_ETF": "BOVA11.SA",
-    "SETOR_FINANCEIRO": "FIND11.SA",
-    "SETOR_MATERIAIS": "MATB11.SA"
+    "IBOV_ETF": "BOVA11.SA"
 }
 
 DATA_INICIO = "2016-01-01"
