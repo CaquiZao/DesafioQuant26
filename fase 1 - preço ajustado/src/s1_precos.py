@@ -23,15 +23,21 @@ import yfinance as yf
 # 1) CONFIGURACOES GERAIS (fica tudo no topo pra ser facil de mudar)
 # ------------------------------------------------------------------
 
-# Lendo os tickers diretamente do grafo para garantir que a base de dados cubra nosso teste
+# Le a lista de tickers do universo de liquidez gerado pelo Bloco 2.
+# O arquivo universo_mensal.parquet contem as top 100 acoes mais liquidas
+# de cada mes (gerado por s2_universo.py a partir do COTAHIST da B3).
+# Aqui extraimos TODOS os tickers unicos que ja apareceram no universo
+# em qualquer mes do historico, para baixar o historico completo deles.
+CAMINHO_UNIVERSO = os.path.join("data", "universo", "universo_mensal.parquet")
+
 try:
-    caminho_grafo = os.path.join(os.path.dirname(__file__), '..', '..', 'fase 4 - sinal da sinapse', 'grafo_manual_base.csv')
-    df_grafo = pd.read_csv(caminho_grafo)
-    TICKERS = list(set(df_grafo['empresa_A'].tolist() + df_grafo['empresa_B'].tolist()))
-    TICKERS.sort()
-except Exception as e:
-    print(f"Aviso: Não encontrou o grafo. Usando fallback. Erro: {e}")
-    TICKERS = ["PETR4", "VALE3"]
+    df_universo = pd.read_parquet(CAMINHO_UNIVERSO)
+    TICKERS = sorted(df_universo["ticker"].unique().tolist())
+    print(f"Universo carregado: {len(TICKERS)} tickers unicos encontrados.")
+except FileNotFoundError:
+    print(f"ERRO: Arquivo '{CAMINHO_UNIVERSO}' nao encontrado.")
+    print("Rode primeiro o Bloco 2 (s2_universo.py) para gerar o universo de liquidez.")
+    TICKERS = []
 
 # Periodo fixo de dados que queremos baixar.
 DATA_INICIO = "2016-01-01"

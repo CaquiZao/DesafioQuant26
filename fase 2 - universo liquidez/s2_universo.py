@@ -33,7 +33,7 @@ import pandas as pd
 # por isso o caminho e especifico desta maquina). Dentro dela existem
 # subpastas tipo "COTAHIST_A2016", "COTAHIST_A2017", etc, e o .TXT fica
 # dentro de cada uma.
-PASTA_COTAHIST = r"C:\Users\Jvssv\Desktop\desafio_itau_quant_pessoal\serie historica cotahist"
+PASTA_COTAHIST = r"C:\Users\kakam\OneDrive\Documentos\PROJETOS\serie historica cotahist"
 
 # Quantas acoes entram no universo de cada mes (as N mais negociadas).
 N_UNIVERSO = 100
