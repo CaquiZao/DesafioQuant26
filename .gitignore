@@ -7,6 +7,10 @@
 *.png
 data/
 
+# Excecoes: CSVs de configuracao (decisao manual, nao dado baixado) --
+# precisam ser versionados para o pipeline ser reprodutivel.
+!fase 1 - preço ajustado/config/*.csv
+
 # Segredos
 .env
 
