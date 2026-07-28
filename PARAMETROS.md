@@ -38,3 +38,10 @@
 - **Justificativa econômica:** O Vol-Targeting substitui as tentativas (quase sempre inúteis) de prever o cenário macro. O investidor institucional quer retorno atrelado a um risco conhecido. Com o alvo de 12%, o algoritmo se autoprotege: se o mercado entrar em histeria coletiva (volatilidade sobe), o modelo reduz automaticamente o tamanho das posições financeiras para manter a carteira travada nos 12% de oscilação. Em águas calmas, ele alavanca levemente. É o mecanismo de defesa perfeito.
 - **Validação Crítica:** Fundos multimercado (*macro* e *quant*) costumam rodar com mandato de volatilidade entre 8% e 15%. Cravar o meio-termo (12%) entrega oscilação suficiente para produzir prêmios interessantes na ponta do Sharpe, sem gerar *drawdowns* (quedas) que matariam um fundo precocemente.
 
+
+
+## 7. Assets Under Management (AUM)
+
+- **Valor Padrão:** R$ 100.000.000 (100 milhões).
+- **Justificativa econômica:** O tamanho do fundo (AUM) dita o quão agressivamente a trava de liquidez (10% do ADTV) irá "tesourar" as posições em empresas menores e desatendidas. Testar a estratégia com 100 milhões reflete um fundo de tamanho médio viável no Brasil.
+- **Validação Crítica:** É imperativo gerar a curva de capacidade do fundo. A estratégia será testada em três cenários de AUM: R$ 20 milhões (onde a trava raramente atua, maximizando o prêmio teórico), R$ 100 milhões (cenário base) e R$ 300 milhões (onde a restrição de liquidez reduz a alocação em small caps, testando a resiliência do modelo).
