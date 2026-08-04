@@ -15,7 +15,12 @@ def main():
     data_dir = os.path.join(base_dir, 'data')
     
     sinal_path = os.path.join(data_dir, 'sinal_sinapse.parquet')
-    retornos_path = os.path.join(data_dir, 'precos', 'retornos_diarios.parquet')
+    # Base completa (Bloco 1c, sem viés de sobrevivência) com fallback
+    # para a base antiga, caso o Bloco 1c ainda não tenha rodado.
+    retornos_path = os.path.join(data_dir, 'precos', 'retornos_diarios_completo.parquet')
+    if not os.path.exists(retornos_path):
+        print("AVISO: base completa nao encontrada -- usando a base com vies de sobrevivencia.")
+        retornos_path = os.path.join(data_dir, 'precos', 'retornos_diarios.parquet')
     setores_path = os.path.join(base_dir, 'fase 4 - sinal da sinapse', 'mapeamento_setores.csv')
     
     # 1. Carregar dados
@@ -36,21 +41,36 @@ def main():
         df_sectors = None
         print("AVISO: mapeamento_setores.csv não encontrado. Trava setorial não será aplicada.")
         
-    # TODO: No futuro, carregar ADTV e Betas salvos nos blocos anteriores.
-    # Por enquanto, rodaremos sem as travas de liquidez (ou com mock) e sem o hedge (ou com mock).
-    # Vamos gerar mock betas (ex: beta = 1.0 para todas as ações) para testar o IBOV_SYNTHETIC.
-    df_betas = pd.DataFrame(1.0, index=df_zscore.index, columns=df_zscore.columns)
-    
+    # Betas reais (Bloco 4): beta de cada ticker contra o IBOV, mesma
+    # regressao rolling de 252 dias usada pro choque limpo do sinal.
+    betas_path = os.path.join(data_dir, 'betas_sinapse.parquet')
+    print("Carregando betas_sinapse.parquet...")
+    df_betas_raw = pd.read_parquet(betas_path)
+    df_betas, _ = df_betas_raw.align(df_zscore, join='right')
+
+    # ADTV real (Bloco 2): media movel de 21 pregoes do volume financeiro
+    # diario, extraida do COTAHIST. Se o arquivo ainda nao existir (Bloco
+    # 2 nao rodou a versao estendida), cai pra None e a trava de liquidez
+    # e pulada, sem quebrar o pipeline.
+    adtv_path = os.path.join(data_dir, 'universo', 'adtv_diario.parquet')
+    if os.path.exists(adtv_path):
+        print("Carregando adtv_diario.parquet...")
+        df_adtv_raw = pd.read_parquet(adtv_path)
+        df_adtv, _ = df_adtv_raw.align(df_zscore, join='right')
+    else:
+        print("AVISO: adtv_diario.parquet não encontrado. Trava de liquidez não será aplicada.")
+        df_adtv = None
+
     # Construir a carteira com o construtor padrão (100M AUM)
     print("Instanciando PortfolioBuilder (AUM = 100M)...")
     pb = PortfolioBuilder(aum=100_000_000)
-    
+
     print("Calculando pesos da carteira...")
     df_weights_final = pb.build_portfolio(
-        df_zscore=df_zscore, 
-        df_returns=df_returns, 
-        df_adtv=None,  # Passando None para pular trava de liquidez caso ADTV não esteja disponível
-        df_betas=df_betas, 
+        df_zscore=df_zscore,
+        df_returns=df_returns,
+        df_adtv=df_adtv,
+        df_betas=df_betas,
         df_sectors=df_sectors
     )
     
