@@ -11,6 +11,14 @@ data/
 # precisam ser versionados para o pipeline ser reprodutivel.
 !fase 1 - preço ajustado/config/*.csv
 
+# O grafo de elos economicos e o mapa de setores sao o NUCLEO da estrategia
+# (decisao manual, nao dado baixado). Sem eles o pipeline nao roda: o Bloco 4
+# depende do grafo pra propagar o sinal e do mapa de setores pra isolar o
+# choque limpo -- foi a ausencia deste ultimo que causou o bug silencioso
+# corrigido em 04/08.
+!fase 4 - sinal da sinapse/grafo_manual_base.csv
+!fase 4 - sinal da sinapse/mapeamento_setores.csv
+
 # Segredos
 .env
 

@@ -58,18 +58,49 @@ def test_limite_peso_setorial():
     tickers = ['A1', 'A2', 'A3', 'A4']
     df_returns = pd.DataFrame(np.random.randn(100, 4)*0.02, columns=tickers)
     df_zscore = pd.DataFrame(0.0, index=df_returns.index, columns=tickers)
-    df_zscore.iloc[-2] = [10.0, 10.0, 10.0, 10.0]
-    
+    # Sinal SUSTENTADO (e nao um pico de um dia so): o builder suaviza os
+    # pesos finais com media movel, entao um pico isolado e diluido de
+    # proposito. Pra testar que a trava setorial BATE no limite, o sinal
+    # precisa durar mais que a janela de suavizacao.
+    DIAS_DE_SINAL = 15
+    JANELA_SUAVIZACAO = 10
+    assert DIAS_DE_SINAL > JANELA_SUAVIZACAO
+    df_zscore.iloc[-DIAS_DE_SINAL:] = 10.0
+
     df_sectors = pd.DataFrame({
         'Ticker': tickers,
         'Setor': ['Financeiro', 'Financeiro', 'Financeiro', 'Financeiro']
     }).set_index('Ticker')
-    
-    pb = PortfolioBuilder(max_weight_sector=0.25, max_weight_name=0.10)
+
+    pb = PortfolioBuilder(max_weight_sector=0.25, max_weight_name=0.10,
+                          janela_suavizacao_pesos=JANELA_SUAVIZACAO)
     df_w = pb.build_portfolio(df_zscore, df_returns, df_adtv=None, df_betas=None, df_sectors=df_sectors)
-    
+
     soma_setor = abs(df_w.iloc[-1]['A1']) + abs(df_w.iloc[-1]['A2']) + abs(df_w.iloc[-1]['A3']) + abs(df_w.iloc[-1]['A4'])
     assert np.isclose(soma_setor, 0.25, atol=1e-5)
+
+
+def test_suavizacao_nao_viola_travas():
+    """A media movel dos pesos e uma combinacao convexa, entao ela nunca
+    pode ESTOURAR uma trava que ja valia antes -- garante que suavizar
+    depois das travas (e nao antes) e seguro."""
+    np.random.seed(7)
+    tickers = ['A1', 'A2', 'A3']
+    df_returns = pd.DataFrame(np.random.randn(200, 3)*0.02, columns=tickers)
+    df_zscore = pd.DataFrame(np.random.randn(200, 3)*5, columns=tickers)
+
+    df_sectors = pd.DataFrame({
+        'Ticker': tickers, 'Setor': ['Financeiro']*3
+    }).set_index('Ticker')
+
+    pb = PortfolioBuilder(max_weight_name=0.05, max_weight_sector=0.10,
+                          janela_suavizacao_pesos=10)
+    df_w = pb.build_portfolio(df_zscore, df_returns, df_adtv=None,
+                              df_betas=None, df_sectors=df_sectors).dropna()
+
+    acoes = df_w[tickers]
+    assert (acoes.abs() <= 0.05 + 1e-9).all().all(), "trava por nome estourada"
+    assert (acoes.abs().sum(axis=1) <= 0.10 + 1e-9).all(), "trava setorial estourada"
 
 def test_beta_neutrality():
     np.random.seed(42)

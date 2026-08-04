@@ -2,13 +2,24 @@ import pandas as pd
 import numpy as np
 
 class PortfolioBuilder:
-    def __init__(self, aum=100_000_000, target_vol=0.12, max_weight_name=0.05, max_weight_sector=0.25, max_adtv_pct=0.10, vol_window=60):
+    def __init__(self, aum=100_000_000, target_vol=0.12, max_weight_name=0.05, max_weight_sector=0.25, max_adtv_pct=0.10, vol_window=60, max_leverage=3.0, n_iteracoes_vol=3, janela_suavizacao_pesos=10):
         self.aum = aum
         self.target_vol = target_vol
         self.max_weight_name = max_weight_name
         self.max_weight_sector = max_weight_sector
         self.max_adtv_pct = max_adtv_pct
         self.vol_window = vol_window
+        self.max_leverage = max_leverage
+        # Quantas rodadas de (calibrar vol -> reaplicar travas). As travas cortam
+        # os pesos e derrubam a vol calibrada, então uma rodada só não converge:
+        # medido em 03/08, a vol caía de 31% para 6,3% depois das travas.
+        self.n_iteracoes_vol = n_iteracoes_vol
+        # Média móvel aplicada aos PESOS FINAIS (não ao sinal). Suavizar o
+        # sinal no Bloco 4 não basta: o escalar de vol-targeting e as travas
+        # mudam todo dia e reintroduzem giro. Suavizar o que é de fato
+        # negociado derrubou o giro de 13,4% para 3,9% ao dia e dobrou o
+        # Sharpe (0,22 -> 0,51) na medição de 03/08.
+        self.janela_suavizacao_pesos = janela_suavizacao_pesos
         
     def build_portfolio(self, df_zscore, df_returns, df_adtv, df_betas, df_sectors):
         """
@@ -25,38 +36,85 @@ class PortfolioBuilder:
             pd.DataFrame: df_weights final com lag t+1 aplicado.
         """
         # 1. Rankeamento e Lado (Z-score cru já serve como direção de força)
-        df_raw_weights = df_zscore.copy()
-        
-        # 2. Vol-Targeting
-        df_weights = self._apply_vol_targeting(df_raw_weights, df_returns)
+        df_weights = df_zscore.copy()
 
-        # 3. Travas Institucionais
-        df_weights = self._apply_institutional_locks(df_weights, df_adtv, df_sectors)
-        
+        # 2/3. Vol-Targeting e Travas Institucionais, alternados.
+        # As travas cortam pesos e derrubam a volatilidade calibrada, então
+        # calibrar uma vez só entrega uma carteira muito abaixo do alvo. Aqui
+        # alternamos as duas etapas, SEMPRE terminando nas travas -- os limites
+        # institucionais (liquidez, 5% por nome, 25% por setor) são inegociáveis
+        # e têm a palavra final. Se eles impedirem chegar ao alvo de vol, a
+        # carteira fica abaixo do alvo mesmo: é uma restrição real, não um bug.
+        for _ in range(self.n_iteracoes_vol):
+            df_weights = self._apply_vol_targeting(df_weights, df_returns)
+            df_weights = self._apply_institutional_locks(df_weights, df_adtv, df_sectors)
+
+        # 3b. Suavização dos pesos finais (controle de giro).
+        # Não precisa reaplicar as travas depois: a média móvel é uma
+        # combinação convexa de vetores que já as respeitam, e como
+        # |média(w)| <= média(|w|), tanto o limite por nome quanto o
+        # setorial continuam válidos automaticamente.
+        df_weights = self._suavizar_pesos(df_weights)
+
         # 4. Beta-Neutro
         df_weights = self._apply_beta_hedge(df_weights, df_betas)
-        
+
         # 5. Lag de Execução t+1
         df_weights_final = df_weights.shift(1)
-        
+
         return df_weights_final
 
+    def _suavizar_pesos(self, df_weights):
+        """
+        Média móvel dos pesos finais, para controlar o giro (turnover).
+
+        O sinal da Sinapse é um choque de UM dia e praticamente não tem
+        persistência, então a carteira-alvo muda quase por completo todo
+        pregão. Negociar isso literalmente custaria mais que todo o alfa.
+        A média móvel transforma a carteira-alvo em "a média das últimas
+        `janela` carteiras", que é o que dá para sustentar na prática.
+        """
+        if not self.janela_suavizacao_pesos or self.janela_suavizacao_pesos <= 1:
+            return df_weights
+        return df_weights.rolling(window=self.janela_suavizacao_pesos, min_periods=1).mean()
+
+    def _estimar_vol_portfolio(self, df_weights, df_returns):
+        """
+        Volatilidade anualizada do portfólio, estimada com a matriz de
+        covariância REALIZADA da janela.
+
+        A versão anterior usava `sqrt(sum((w_i * vol_i)^2))`, que assume
+        correlação ZERO entre as ações -- premissa falsa que subestimava a vol
+        do book e fazia a calibração errar o alvo por um fator de ~2,6x
+        (entregava 31% quando o alvo era 12%). Aqui usamos w' * Cov * w, que
+        captura a correlação de verdade.
+
+        A janela vai de t-vol_window até t-1 (exclui o próprio dia t), então
+        não há look-ahead.
+        """
+        colunas = [c for c in df_weights.columns if c in df_returns.columns]
+        matriz_pesos = df_weights[colunas].fillna(0.0).to_numpy(dtype=float)
+        matriz_retornos = df_returns[colunas].reindex(df_weights.index).fillna(0.0).to_numpy(dtype=float)
+
+        vols = np.full(len(matriz_pesos), np.nan)
+        for i in range(self.vol_window, len(matriz_pesos)):
+            janela = matriz_retornos[i - self.vol_window:i]
+            covariancia = np.cov(janela, rowvar=False)
+            pesos = matriz_pesos[i]
+            variancia = float(np.atleast_2d(covariancia).dot(pesos).dot(pesos))
+            vols[i] = np.sqrt(max(variancia, 0.0) * 252)
+
+        return pd.Series(vols, index=df_weights.index)
+
     def _apply_vol_targeting(self, df_weights, df_returns):
-        # Para evitar endogeneidade (pesos do target dependendo da vol do portfolio iterativo), 
-        # utilizamos uma estimativa de variância baseada no rolling std das ações individuais.
-        df_vol = df_returns.rolling(self.vol_window).std() * np.sqrt(252)
-        
-        # Variância proxy: assume correlação nula por simplicidade, ou o escalar limitará.
-        # Vol do portfólio = sqrt( sum( (w_i * vol_i)^2 ) )
-        port_vol_proxy = np.sqrt((df_weights**2 * df_vol**2).sum(axis=1))
-        port_vol_proxy = port_vol_proxy.replace(0, np.nan)
-        
-        scalar = self.target_vol / port_vol_proxy
-        scalar = scalar.fillna(1.0)
-        
-        # Limitando alavancagem máxima/mínima para evitar explosões 
-        scalar = scalar.clip(lower=0.1, upper=3.0)
-        
+        port_vol = self._estimar_vol_portfolio(df_weights, df_returns)
+
+        scalar = self.target_vol / port_vol.replace(0, np.nan)
+        scalar = scalar.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+
+        # Limitando alavancagem máxima/mínima para evitar explosões
+        scalar = scalar.clip(lower=0.1, upper=self.max_leverage)
+
         return df_weights.multiply(scalar, axis=0)
 
     def _apply_institutional_locks(self, df_weights, df_adtv, df_sectors):

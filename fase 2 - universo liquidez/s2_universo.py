@@ -38,9 +38,24 @@ PASTA_COTAHIST = r"C:\Users\kakam\OneDrive\Documentos\PROJETOS\serie historica c
 # Quantas acoes entram no universo de cada mes (as N mais negociadas).
 N_UNIVERSO = 100
 
-# Pasta de saida (dentro do repo, mas ja esta no .gitignore -> nao sobe
-# pro Github, so o script fica versionado).
-PASTA_SAIDA = os.path.join("data", "universo")
+# Janela (em pregoes) da media movel do ADTV -- Volume Financeiro Medio
+# Diario dos ultimos 21 pregoes, conforme acordado em PARAMETROS.md.
+JANELA_ADTV = 21
+NOME_ARQUIVO_ADTV = "adtv_diario.parquet"
+
+# Precos de fechamento diarios extraidos do COTAHIST. Diferente do
+# yfinance, o COTAHIST tem preco de TODA acao que ja negociou -- inclusive
+# as deslistadas -- por isso este arquivo e o que corrige o vies de
+# sobrevivencia. Vai pra data/precos (e um insumo de preco, nao de universo).
+NOME_ARQUIVO_PRECOS = "precos_cotahist.parquet"
+
+# Pasta de saida: SEMPRE a pasta "data" da raiz do repositorio (mesmo
+# padrao do Bloco 5 em exec_s5.py), resolvida a partir deste arquivo --
+# assim o caminho fica certo independente de onde o script e chamado
+# (antes era relativo a cwd, e rodar de dentro de "fase 2 - universo
+# liquidez" criava sem querer uma pasta "data" local, duplicada).
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PASTA_SAIDA = os.path.join(BASE_DIR, "..", "data", "universo")
 NOME_ARQUIVO_SAIDA = "universo_mensal.parquet"
 
 # Todo registro do COTAHIST tem exatamente essa largura (numero de
@@ -134,10 +149,11 @@ def encontrar_arquivos_cotahist(pasta_raiz):
 # 3) LER UM ARQUIVO E SOMAR VOLUME POR (MES, TICKER)
 # ------------------------------------------------------------------
 
-def processar_arquivo(caminho_arquivo, volume_por_mes_ticker, bdi_por_ticker):
+def processar_arquivo(caminho_arquivo, volume_por_mes_ticker, bdi_por_ticker, volume_por_dia_ticker, preco_por_dia_ticker):
     """
     Le um arquivo COTAHIST inteiro, linha por linha, e vai somando o
-    volume financeiro de cada acao dentro de cada mes.
+    volume financeiro de cada acao dentro de cada mes (e, na mesma
+    passada, dentro de cada dia -- usado depois pra montar o ADTV real).
 
     volume_por_mes_ticker: dicionario compartilhado entre todos os
     arquivos, no formato {(mes, ticker): volume_acumulado}. A funcao
@@ -146,6 +162,17 @@ def processar_arquivo(caminho_arquivo, volume_por_mes_ticker, bdi_por_ticker):
     bdi_por_ticker: dicionario compartilhado entre todos os arquivos, no
     formato {ticker: {conjunto de codigos BDI ja vistos para ele}}. E
     usado depois pra classificar o ticker como ETF/FII/acao normal.
+
+    volume_por_dia_ticker: dicionario compartilhado entre todos os
+    arquivos, no formato {(data_pregao, ticker): volume_do_dia}. Serve
+    pra calcular o ADTV (volume medio diario) de verdade no Bloco 5,
+    diferente do volume_mes que so serve pro ranking do universo.
+
+    preco_por_dia_ticker: dicionario compartilhado, no formato
+    {(data_pregao, ticker): preco_de_fechamento}. E o antidoto do VIES DE
+    SOBREVIVENCIA: o COTAHIST tem preco de TODA acao que ja negociou,
+    inclusive as que quebraram ou sairam da bolsa (KROT3, CIEL3, BTOW3,
+    HGTX3...), que o yfinance simplesmente nao fornece.
     """
     tamanho_arquivo_bytes = os.path.getsize(caminho_arquivo)
     print(f"\n--- Processando: {caminho_arquivo}")
@@ -204,6 +231,24 @@ def processar_arquivo(caminho_arquivo, volume_por_mes_ticker, bdi_por_ticker):
             # entao a soma funciona mesmo na primeira vez que o ticker aparece.
             chave = (mes, ticker)
             volume_por_mes_ticker[chave] = volume_por_mes_ticker.get(chave, 0.0) + volume
+
+            # Mesmo volume, agora acumulado por DIA (data_pregao completa,
+            # nao so mes) -- um ticker so aparece uma vez por dia no
+            # mercado a vista, entao aqui e so um set, nao uma soma, mas
+            # usamos +get(...,0.0) por seguranca/uniformidade com a linha
+            # acima caso exista mais de um registro no mesmo dia.
+            chave_dia = (data_pregao, ticker)
+            volume_por_dia_ticker[chave_dia] = volume_por_dia_ticker.get(chave_dia, 0.0) + volume
+
+            # Preco de fechamento (PREULT), 13 digitos com 2 casas decimais
+            # implicitas. FATCOT e o "fator de cotacao": quantas acoes cada
+            # cotacao representa (quase sempre 1, mas 1000 em papeis de
+            # centavos). Dividimos por ele pra ter SEMPRE preco por acao --
+            # senao uma mudanca de FATCOT viraria um salto falso no retorno.
+            fator_cotacao = int(linha[210:217]) or 1
+            preco_fechamento = (int(linha[108:121]) / 100) / fator_cotacao
+            if preco_fechamento > 0:
+                preco_por_dia_ticker[chave_dia] = preco_fechamento
 
             # Guarda que este ticker ja apareceu com este BDI, alguma vez.
             # setdefault cria um conjunto vazio na primeira vez que ve o
@@ -330,6 +375,94 @@ def montar_universo_mensal(volume_por_mes_ticker, bdi_por_ticker, n_universo):
 
 
 # ------------------------------------------------------------------
+# 4b) ADTV DIARIO (Volume Financeiro Medio Diario, media movel de
+#     JANELA_ADTV pregoes) -- usado pela trava de liquidez do Bloco 5
+# ------------------------------------------------------------------
+
+def montar_adtv_diario(volume_por_dia_ticker, bdi_por_ticker, janela):
+    """
+    Recebe o dicionario {(data_pregao, ticker): volume_do_dia} e devolve
+    uma tabela LARGA (indice = data, colunas = ticker, valores = ADTV em
+    R$) com a media movel de `janela` pregoes do volume financeiro
+    diario. Diferente de montar_universo_mensal, aqui NAO cortamos por
+    top-N -- a trava de liquidez do Bloco 5 precisa poder avaliar
+    qualquer ticker que a Sinapse decida operar, nao so o top-100 do mes.
+    Mesmo assim, removemos ETF/BDR/FII (mesmo filtro do universo mensal),
+    porque essas nao sao "acoes de empresa" que a Sinapse opera.
+    """
+    linhas = [
+        {"data": data, "ticker": ticker, "volume": volume}
+        for (data, ticker), volume in volume_por_dia_ticker.items()
+    ]
+    tabela_crua = pd.DataFrame(linhas)
+
+    tickers_unicos = tabela_crua["ticker"].unique()
+    motivo_por_ticker = {
+        ticker: classificar_ticker(ticker, bdi_por_ticker) for ticker in tickers_unicos
+    }
+    tabela_crua["motivo"] = tabela_crua["ticker"].map(motivo_por_ticker)
+    tabela_filtrada = tabela_crua[tabela_crua["motivo"] == "acao"].copy()
+
+    # "data" vem no formato "AAAAMMDD" (mesma fatia usada pro mes) --
+    # convertemos pra datetime pra virar um indice de verdade.
+    tabela_filtrada["data"] = pd.to_datetime(tabela_filtrada["data"], format="%Y%m%d")
+
+    # Pivota pra formato largo: uma linha por data de pregao, uma coluna
+    # por ticker. Dias em que o ticker nao negociou (sem linha no
+    # COTAHIST) viram 0.0 -- e volume real zero, nao dado faltante.
+    tabela_volume_diario = tabela_filtrada.pivot_table(
+        index="data", columns="ticker", values="volume", aggfunc="sum", fill_value=0.0
+    ).sort_index()
+
+    # Media movel de `janela` pregoes = ADTV. min_periods baixo pra nao
+    # perder os primeiros dias do historico inteiro por causa da janela.
+    tabela_adtv = tabela_volume_diario.rolling(window=janela, min_periods=5).mean()
+
+    return tabela_adtv
+
+
+# ------------------------------------------------------------------
+# 4c) PRECOS DIARIOS (antidoto do vies de sobrevivencia)
+# ------------------------------------------------------------------
+
+def montar_precos_diarios(preco_por_dia_ticker, bdi_por_ticker):
+    """
+    Recebe o dicionario {(data_pregao, ticker): preco_fechamento} e devolve
+    uma tabela LARGA (indice = data, colunas = ticker, valores = preco de
+    fechamento por acao).
+
+    Serve pra corrigir o VIES DE SOBREVIVENCIA do Bloco 1: o yfinance so
+    entrega preco de empresa que AINDA existe, entao 87 das 253 acoes do
+    universo point-in-time ficavam de fora do backtest -- justamente as que
+    quebraram ou foram compradas. Aqui elas voltam.
+
+    IMPORTANTE: este preco NAO e ajustado por proventos/desdobramentos (o
+    COTAHIST nao traz esse ajuste). Quem consome precisa tratar isso -- ver
+    a validacao contra o yfinance feita no Bloco 1.
+    """
+    linhas = [
+        {"data": data, "ticker": ticker, "preco": preco}
+        for (data, ticker), preco in preco_por_dia_ticker.items()
+    ]
+    tabela_crua = pd.DataFrame(linhas)
+
+    tickers_unicos = tabela_crua["ticker"].unique()
+    motivo_por_ticker = {
+        ticker: classificar_ticker(ticker, bdi_por_ticker) for ticker in tickers_unicos
+    }
+    tabela_crua["motivo"] = tabela_crua["ticker"].map(motivo_por_ticker)
+    tabela_filtrada = tabela_crua[tabela_crua["motivo"] == "acao"].copy()
+
+    tabela_filtrada["data"] = pd.to_datetime(tabela_filtrada["data"], format="%Y%m%d")
+
+    # Aqui NAO usamos fill_value=0: dia sem negociacao e preco DESCONHECIDO,
+    # nao preco zero (zerar criaria um retorno de -100% seguido de +infinito).
+    return tabela_filtrada.pivot_table(
+        index="data", columns="ticker", values="preco", aggfunc="last"
+    ).sort_index()
+
+
+# ------------------------------------------------------------------
 # 5) RELATORIO DE SANIDADE (conferencia visual do resultado)
 # ------------------------------------------------------------------
 
@@ -436,18 +569,46 @@ def main():
     # os codigos BDI que ele ja teve em qualquer mes/ano do historico.
     bdi_por_ticker = {}
 
+    # Dicionario compartilhado que vai acumulando o volume de TODOS os
+    # arquivos, dia a dia (usado pra montar o ADTV real).
+    volume_por_dia_ticker = {}
+
+    # Idem, mas com o preco de fechamento -- inclui as acoes que morreram,
+    # que o yfinance nao fornece (correcao do vies de sobrevivencia).
+    preco_por_dia_ticker = {}
+
     for caminho in arquivos:
-        processar_arquivo(caminho, volume_por_mes_ticker, bdi_por_ticker)
+        processar_arquivo(
+            caminho, volume_por_mes_ticker, bdi_por_ticker,
+            volume_por_dia_ticker, preco_por_dia_ticker,
+        )
 
     print("\nMontando o universo mensal (filtro de ETF/BDR/FII, ranking e corte top N)...")
     tabela_universo, contagem_removidos = montar_universo_mensal(
         volume_por_mes_ticker, bdi_por_ticker, N_UNIVERSO
     )
 
+    print(f"\nMontando o ADTV diario (media movel de {JANELA_ADTV} pregoes)...")
+    tabela_adtv = montar_adtv_diario(volume_por_dia_ticker, bdi_por_ticker, JANELA_ADTV)
+
+    print("\nMontando a tabela de precos diarios (inclui acoes ja deslistadas)...")
+    tabela_precos = montar_precos_diarios(preco_por_dia_ticker, bdi_por_ticker)
+    print(f"  {tabela_precos.shape[1]} tickers, {tabela_precos.shape[0]} pregoes")
+
     # Garante que a pasta de saida existe (cria, se nao existir).
     os.makedirs(PASTA_SAIDA, exist_ok=True)
     caminho_saida = os.path.join(PASTA_SAIDA, NOME_ARQUIVO_SAIDA)
     tabela_universo.to_parquet(caminho_saida, engine="pyarrow", index=False)
+
+    caminho_adtv = os.path.join(PASTA_SAIDA, NOME_ARQUIVO_ADTV)
+    tabela_adtv.to_parquet(caminho_adtv, engine="pyarrow")
+    print(f"ADTV diario salvo em: {caminho_adtv}")
+
+    pasta_precos = os.path.join(BASE_DIR, "..", "data", "precos")
+    os.makedirs(pasta_precos, exist_ok=True)
+    caminho_precos = os.path.join(pasta_precos, NOME_ARQUIVO_PRECOS)
+    tabela_precos.to_parquet(caminho_precos, engine="pyarrow")
+    print(f"Precos diarios (COTAHIST) salvos em: {caminho_precos}")
     print(f"Universo mensal salvo em: {caminho_saida}")
 
     imprimir_relatorio_sanidade(tabela_universo, contagem_removidos)
