@@ -19,6 +19,12 @@ data/
 !fase 4 - sinal da sinapse/grafo_manual_base.csv
 !fase 4 - sinal da sinapse/mapeamento_setores.csv
 
+# Elos com empresas que MORRERAM no periodo (Kroton, B2W, Cielo, Gol...).
+# Mesma natureza do grafo_manual_base: decisao manual, nao dado baixado.
+# Sem ele o grafo volta a enxergar so sobreviventes -- e o vies de selecao
+# corrigido em 04/08 (pendencia P2) reaparece silenciosamente.
+!fase 4 - sinal da sinapse/grafo_historico.csv
+
 # Segredos
 .env
 

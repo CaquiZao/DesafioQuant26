@@ -42,15 +42,32 @@ def carregar_dados():
         caminho_retornos = os.path.join(data_dir, 'retornos_diarios.parquet')
     caminho_indices = os.path.join(data_dir, 'indices_retornos.parquet')
     caminho_grafo = os.path.join(base_dir, '..', 'grafo_manual_base.csv')
+    # Elos com empresas que MORRERAM durante o periodo (Kroton, B2W, Cielo,
+    # Hering, Gol...). Sem eles o grafo so enxerga sobreviventes: um analista
+    # em 2016 teria escrito exatamente essas relacoes, e nao saberia quais
+    # iriam quebrar. Ver `Registros dos processos/acomp_04_08_sessao2.md` (P2).
+    caminho_grafo_hist = os.path.join(base_dir, '..', 'grafo_historico.csv')
     caminho_map = os.path.join(base_dir, '..', 'mapeamento_setores.csv')
-    
+
     df_retornos = pd.read_parquet(caminho_retornos)
     df_indices = pd.read_parquet(caminho_indices)
-    
+
     df_grafo = pd.DataFrame(columns=['empresa_A', 'empresa_B', 'tipo_de_elo', 'forca', 'direcao'])
     if os.path.exists(caminho_grafo):
         df_grafo = pd.read_csv(caminho_grafo)
         print(f"Grafo carregado com {len(df_grafo)} elos.")
+
+    # Os dois arquivos sao mantidos separados de proposito: um descreve a
+    # bolsa de hoje, o outro as relacoes que existiram e acabaram. Juntar
+    # num arquivo so esconderia quais elos vieram da correcao do vies.
+    if os.path.exists(caminho_grafo_hist):
+        df_hist = pd.read_csv(caminho_grafo_hist)
+        df_grafo = pd.concat([df_grafo, df_hist], ignore_index=True)
+        print(f"Grafo historico (empresas mortas): +{len(df_hist)} elos "
+              f"-> {len(df_grafo)} no total.")
+        # Um elo cuja empresa deixou de existir para de gerar sinal sozinho:
+        # `montar_sinal_propagado` trata choque ausente como zero. Nao ha
+        # necessidade de coluna de vigencia.
         
     df_map = pd.DataFrame(columns=['TICKER', 'Setor B3'])
     if os.path.exists(caminho_map):
