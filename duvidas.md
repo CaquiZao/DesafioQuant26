@@ -39,9 +39,40 @@ Para as ações que o Yahoo Finance rejeitar (deslistadas ou renomeadas), faremo
 
 Estou com receio de estar fazendo muitas correções, e mesmo que elas estejam 100% corretas e não cometendo vies de sobrevivencia, e acabar nao entendendo o meu proprio codigo/estrategia apos todas as alteracoes/correcoes/iteracoes.
 A cada iteracao, a estrategia, o funcionamento, o fluxo do codigos vao ficando mais borrados.
+----------------------------------------------------------------------------------------
 
-antes de sair expandindo o grafo
+Revisão Técnica: Corrigindo o Mapeamento Setorial e Integrando com o Grafo
+1. O que foi feito
+O arquivo mapeamento_setores.csv estava majoritariamente preenchido com "A DEFINIR" (201 de 253 tickers), impedindo que os choques setoriais fossem calculados corretamente.
+Isso fazia com que o choque tivesse um viés de mercado, pois o "índice setorial" de cada ação era, na prática, a média de todas as ações negociadas.
+O mapeamento foi reconstruído utilizando a taxonomia oficial da B3 (CIK), classificando todas as empresas do universo e adicionando as 2 que estavam faltando (FIQE3, LOGG3).
+As únicas empresas sem classificação foram as que não foram identificadas com certeza (PARC3), sendo mantidas como "A DEFINIR" para evitar contaminação.
+2. Decisão técnica
+Optei por usar a taxonomia da B3 porque ela é a fonte oficial de classificação de ativos negociados na bolsa brasileira, garantindo que as categorias sejam economicamente consistentes e verificáveis.
+Descartei a manutenção do mapeamento fragmentado pois ele violava o requisito de choque setorial puro, distorcendo os coeficientes e invalidando o teste de t.
+A escolha de não classificar PARC3 foi uma decisão conservadora: adicionar um setor "chutado" seria pior do que deixar sem classificação, dado que o erro seria propagado para um setor inteiro.
+3. Integrações tocadas
+Arquivo: mapeamento_setores.csv
+Alteração: Preenchimento das 255 linhas com categorias da B3 (CIK).
+Ação: Adicionadas 2 novas empresas (FIQE3, LOGG3) e corrigidas 200 entradas de "A DEFINIR".
+Arquivo: s3_backtest.py (retorno)
+Alteração: Ajuste do alerta de trava setorial
+Correção do texto para refletir a correção do mapeamento e a remoção do viés de mercado, que agora limita a trava em -32,9% em vez de -55,9%.
+4. Safeguard
+O problema do "A DEFINIR" é uma variante do Bug 1 (mapeamento não lido). A integração foi feita de forma a não sobrescrever setores já definidos (usando if/else no preenchimento), tornando a operação idempotente e segura para múltiplas execuções.
 
+
+
+plan -- reformular volatilidade anualizada, pois nao conseguir atingir os 12% podem estar limitando muito a estratégia.
+
+plan -- reestruturar grafo, o jeito que estruturamos pode não estar fazendo sentido. não é solido o metodo de criacao dos grafos. criar um novo metodo de criacao de sinais?
+
+o que foi feito na estrategia original de cohen que não fizemos, e por que a nossa estrategia nao esta dando certo como a deles?
+o que precisa ser feito para a nossa estrategia performar como a deles?
+
+
+
+----------------------------------------------------------------------------------------
 pedir para resumir tudo o que foi alterado , todas as decisoes tomadas, todos os bugs encontrados e safeguards
 1. O que foi feito —
 [ o que a sessão construiu ou alterou, em linguagem direta ]

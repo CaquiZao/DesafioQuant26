@@ -360,15 +360,22 @@ def main():
     retorno_diario_estrategia = curva_estrategia.pct_change().dropna()
     retorno_diario_ibovespa = curva_ibovespa.pct_change().dropna()
 
-    # Sharpe medido contra o CDI (taxa livre de risco de verdade -- o CDI
-    # variou de ~14% a ~2% ao ano no periodo, entao usar uma constante
-    # distorceria a metrica).
+    # A Sinapse e uma carteira LONG-SHORT com exposicao liquida ~ zero e
+    # autofinanciada: as posicoes vendidas financiam as compradas, entao o
+    # AUM permanece em caixa rendendo CDI. O P&L que `rodar_motor` calcula
+    # JA E, portanto, um retorno em EXCESSO sobre a taxa livre de risco.
+    #
+    # Subtrair o CDI dele de novo (como esta versao fazia) desconta a taxa
+    # livre DUAS VEZES e produz o absurdo de Sharpe negativo com retorno
+    # positivo. Por isso o Sharpe da estrategia usa o proprio P&L.
+    #
+    # O Ibovespa, ao contrario, e um investimento comprado e financiado --
+    # para ele o excesso sobre o CDI continua sendo o calculo certo.
     metricas = {
         "estrategia sinapse": {
             "retorno_total": calcular_retorno_total(curva_estrategia),
             "sharpe_anualizado": calcular_sharpe_anualizado(
-                retorno_diario_estrategia, TAXA_LIVRE_ANUAL, DIAS_UTEIS_ANO,
-                retorno_livre_diario=retorno_cdi_alinhado,
+                retorno_diario_estrategia, 0.0, DIAS_UTEIS_ANO,
             ),
             "drawdown_maximo": calcular_drawdown_maximo(curva_estrategia),
         },
@@ -457,10 +464,18 @@ def main():
             "nao na qualidade do sinal -- aumentar a suavizacao do Bloco 4."
         )
     if vol_realizada < 0.5 * 0.12:
+        # Diagnosticado em 04/08 (`fase 6 - validacao/src/s8_diagnostico_vol.py`).
+        # NAO e alavancagem: o escalar de vol pedido bate no teto em 0% dos
+        # dias -- a estrategia na verdade DESALAVANCA. As tres travas
+        # institucionais agem como substitutas (relaxar uma faz outra morder),
+        # e juntas cortam ~53% da exposicao bruta.
         print(
-            "\nATENCAO: a carteira esta rodando MUITO abaixo do alvo de vol -- "
-            "as travas institucionais (liquidez/nome/setor) devem estar limitando. "
-            "O retorno esperado escala junto com a vol, entao isso segura o resultado."
+            "\nATENCAO: a carteira esta rodando abaixo do alvo de vol. As travas "
+            "institucionais (liquidez, nome, setor) cortam ~53% da exposicao "
+            "bruta e agem como substitutas -- relaxar uma faz a outra morder. "
+            "Nao e erro de calibragem: o vol-targeting acerta 12% a cada "
+            "passada e as travas derrubam depois. Mais elos no grafo (P3) "
+            "elevam o teto, porque diluem a concentracao por nome e setor."
         )
 
     print("\n===== RESUMO DAS METRICAS =====")
@@ -472,10 +487,18 @@ def main():
         )
 
     # O CDI e o benchmark oficial de performance do projeto.
-    excesso_cdi = (
-        metricas["estrategia sinapse"]["retorno_total"] - metricas["cdi (benchmark)"]["retorno_total"]
-    )
-    print(f"\nExcesso sobre o CDI (benchmark oficial): {excesso_cdi:+.1%} no periodo")
+    #
+    # A comparacao correta NAO e "retorno da carteira long-short vs CDI":
+    # o P&L long-short ja e excesso sobre o caixa, entao compara-lo com o
+    # CDI equivale a exigir que a estrategia pague o CDI duas vezes. O que
+    # o cotista veria e CDI + alfa -- e essa a curva do fundo.
+    retorno_fundo = retorno_diario_estrategia.add(retorno_cdi_alinhado, fill_value=0.0)
+    curva_fundo = (1 + retorno_fundo).cumprod()
+    retorno_fundo_total = calcular_retorno_total(curva_fundo)
+    excesso_cdi = retorno_fundo_total - metricas["cdi (benchmark)"]["retorno_total"]
+
+    print(f"\nRetorno do FUNDO (CDI + alfa da carteira): {retorno_fundo_total:+.1%} no periodo")
+    print(f"Excesso sobre o CDI (benchmark oficial):  {excesso_cdi:+.1%} no periodo")
     if excesso_cdi < 0:
         print("  -> a estrategia ainda NAO bate o CDI.")
 

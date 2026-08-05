@@ -50,11 +50,46 @@ class PortfolioBuilder:
             df_weights = self._apply_institutional_locks(df_weights, df_adtv, df_sectors)
 
         # 3b. Suavização dos pesos finais (controle de giro).
-        # Não precisa reaplicar as travas depois: a média móvel é uma
-        # combinação convexa de vetores que já as respeitam, e como
-        # |média(w)| <= média(|w|), tanto o limite por nome quanto o
-        # setorial continuam válidos automaticamente.
         df_weights = self._suavizar_pesos(df_weights)
+
+        # 3c. Reaplicar as travas DEPOIS de suavizar.
+        #
+        # A versão anterior pulava esta etapa, apoiada no argumento de que a
+        # média móvel é uma combinação convexa de carteiras que já respeitam
+        # os limites, e |média(w)| <= média(|w|). Esse argumento é válido --
+        # mas SÓ para limites CONSTANTES no tempo (5% por nome, 25% por
+        # setor).
+        #
+        # A trava de liquidez não é constante: o limite do dia t depende do
+        # ADTV do dia t. A média dos pesos dos últimos 10 pregões pode
+        # perfeitamente estourar o limite de HOJE se o volume negociado caiu
+        # nesse intervalo. Medido em 04/08: 60,5% dos dias tinham ao menos
+        # uma posição acima do permitido, com até 74% do book em posições
+        # ilegais no pior dia -- incluindo posições em ações que não
+        # negociaram nada naquele pregão (limite zero).
+        #
+        # Isso não é um detalhe contábil: significava um backtest com
+        # posições que não seriam executáveis na vida real, exatamente a
+        # crítica que a trava de liquidez existe para evitar.
+        df_weights = self._apply_institutional_locks(df_weights, df_adtv, df_sectors)
+
+        # 3d. Máscara de negociabilidade.
+        #
+        # Uma ação que deixou de ser negociada (delistada, suspensa) não tem
+        # retorno no dia. Se ela ficar com peso, a posição consome limite de
+        # risco e de setor, entra no cálculo de volatilidade, mas rende
+        # exatamente zero -- uma "posição fantasma".
+        #
+        # Isso precisa vir DEPOIS da suavização, e não antes: a média móvel
+        # dos 10 pregões anteriores ressuscita o peso de uma ação que parou
+        # de negociar, do mesmo jeito que ressuscitava pesos acima da trava
+        # de liquidez (ver passo 3c). Zerar o sinal na entrada não basta.
+        #
+        # Não há look-ahead: a decisão do dia t usa a informação de que a
+        # ação negociou em t, e o peso só é executado em t+1 (shift abaixo).
+        # É a mesma premissa de qualquer mesa -- só se manda ordem de papel
+        # que está negociando.
+        df_weights = self._mascarar_nao_negociaveis(df_weights, df_returns)
 
         # 4. Beta-Neutro
         df_weights = self._apply_beta_hedge(df_weights, df_betas)
@@ -77,6 +112,24 @@ class PortfolioBuilder:
         if not self.janela_suavizacao_pesos or self.janela_suavizacao_pesos <= 1:
             return df_weights
         return df_weights.rolling(window=self.janela_suavizacao_pesos, min_periods=1).mean()
+
+    def _mascarar_nao_negociaveis(self, df_weights, df_returns):
+        """
+        Zera o peso de cada ação nos dias em que ela não tem retorno --
+        isto é, não está sendo negociada.
+
+        Sem isso, o backtest carrega posições em papéis delistados ou
+        suspensos: elas ocupam espaço nas travas e na conta de risco, mas
+        não podem gerar nem perda nem ganho. Medido em 04/08: ~2% do book
+        em média, mesmo no grafo só de sobreviventes.
+        """
+        if df_returns is None or df_returns.empty:
+            return df_weights
+
+        negociavel = df_returns.reindex(
+            index=df_weights.index, columns=df_weights.columns
+        ).notna()
+        return df_weights.where(negociavel, 0.0)
 
     def _estimar_vol_portfolio(self, df_weights, df_returns):
         """

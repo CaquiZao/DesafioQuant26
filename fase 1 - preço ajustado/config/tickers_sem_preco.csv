@@ -4,7 +4,7 @@ ALSC3,empresa_extinta
 ALSO3,empresa_extinta
 ARTR3,empresa_extinta
 ARZZ3,empresa_extinta
-AXIA6,sem_fonte_confiavel
+AXIA6,ticker_nao_existe_no_yahoo
 AZUL4,sem_fonte_confiavel
 BBTG11,empresa_extinta
 BIDI11,empresa_extinta
@@ -23,7 +23,7 @@ CESP6,empresa_extinta
 CIEL3,empresa_extinta
 CLSA3,sem_fonte_confiavel
 CNTO3,empresa_extinta
-CPLE5,sem_fonte_confiavel
+CPLE5,reclassificacao_societaria
 CPLE6,sem_fonte_confiavel
 CPRE3,empresa_extinta
 CRFB3,sem_fonte_confiavel
@@ -38,7 +38,7 @@ ESTC3,empresa_extinta
 FJTA4,empresa_extinta
 GNDI3,empresa_extinta
 GOLL4,empresa_extinta
-GUAR3,sem_fonte_confiavel
+GUAR3,ticker_nao_existe_no_yahoo
 HGTX3,empresa_extinta
 IGTA3,empresa_extinta
 JBSS3,sucessor_bdr
@@ -54,14 +54,14 @@ MOSI3,empresa_extinta
 MPLU3,empresa_extinta
 MRFG3,sem_fonte_confiavel
 NGRD3,empresa_extinta
-NEOE3,sem_fonte_confiavel
+NEOE3,ticker_nao_existe_no_yahoo
 NTCO3,sucessor_com_hiato
 ODPV3,sem_fonte_confiavel
 OMGE3,empresa_extinta
 PARC3,empresa_extinta
 PARD3,empresa_extinta
 PCAR4,empresa_extinta
-PETZ3,sem_fonte_confiavel
+PETZ3,ticker_nao_existe_no_yahoo
 PORT3,sem_fonte_confiavel
 PRBC4,empresa_extinta
 QGEP3,empresa_extinta
