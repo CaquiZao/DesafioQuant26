@@ -566,6 +566,219 @@ O número oficial ainda deve sair do **walk-forward**, não desta rodada.
 
 ---
 
+# 7.7 Custo realista, evidência e o número oficial
+
+## 7.7.1 O modelo de custo (novo: `fase 3 - backtest/src/s3b_custos.py`)
+
+O backtest usava **5 bps flat** sobre o giro. É um número de large cap líquida aplicado a um
+book em que 73% do giro está abaixo de R$150MM de ADTV. Faltavam dois componentes inteiros:
+impacto de mercado e **aluguel (BTC) da ponta vendida**.
+
+Três camadas:
+
+| camada | fórmula | natureza |
+|---|---|---|
+| spread + taxas | meio-spread por faixa de ADTV + 2,3 bps emolumentos + 3,0–4,0 corretagem | emolumento **observável**; spread **estimado** |
+| impacto | `0,4 × σ₆₀ × √(participação)` (Almgren-Chriss) | **estimado** (η) |
+| aluguel BTC | 1,0 / 2,0 / 3,5 / 6,0 % a.a. por faixa, sobre a ponta vendida | **estimado** |
+
+**Resultado medido:**
+
+| componente | % ao ano |
+|---|---|
+| spread + taxas | 1,46% |
+| impacto | 1,06% |
+| **aluguel (BTC)** | **1,45%** |
+| hedge (futuro de índice) | 0,05% |
+| **total** | **4,02%** |
+
+```
+Custo por unidade de giro   : 33,6 bps
+Premissa antiga (flat)      :  5,0 bps
+ALFA por unidade de giro    : 33,7 bps
+```
+
+> **Este par de números é o resultado mais defensável do projeto.** Ele mostra que a conclusão
+> **não depende da nossa calibração de custo** — depende de uma propriedade medida do sinal.
+> Blinda contra "vocês foram pessimistas" e contra "vocês foram otimistas" ao mesmo tempo.
+
+Sensibilidade ao parâmetro de impacto, que é o mais incerto:
+
+| η | custo/ano | líquido/ano |
+|---|---|---|
+| 0,0 | 2,96% | +1,14% |
+| 0,2 | 3,49% | +0,67% |
+| **0,4 (central)** | **4,02%** | **+0,19%** |
+| 0,7 | 4,81% | −0,52% |
+| 1,0 | 5,61% | −1,23% |
+
+**O achado mais acionável do projeto:** no período pós-2019, **60%+ do custo é aluguel BTC**,
+que é carrego proporcional ao book vendido — **imune a qualquer redução de giro**. Suavizar
+mais, cortar posições ou alongar o horizonte não mexem nele.
+
+## 7.7.2 D1 e D2 — testados sob protocolo, **não adotados**
+
+Duas decisões foram submetidas ao protocolo IS/OOS com critério pré-declarado:
+
+| | grade | critério | vencedor no IS |
+|---|---|---|---|
+| **D1** teto de satélites/subsetor | {3, 5, 8, 12, sem teto} | Sharpe líquido IS | **3** (monotônico) |
+| **D2** neutralizar contra beta | {não, beta, beta+setor} | IC in-sample | **beta** |
+
+**Resultado OOS, medido uma vez:**
+
+| configuração | SR IS | **SR OOS** |
+|---|---|---|
+| congelada (teto 3, beta) | +0,114 | **−0,150** |
+| sem teto, sem neutralização | +0,123 | **−0,051** |
+
+E a grade completa 5×3 no OOS: **nenhuma célula com Sharpe líquido positivo — exceto
+exatamente a que os dois critérios in-sample rejeitaram por larga margem** (beta+setor:
+SR IS −0,87 → SR OOS +0,48 a +0,58). Inversão de sinal IS→OOS de manual.
+
+**Decisão: não adotar nenhuma das duas.** A leitura correta não é "o teto de 3 é ruim" — é que
+**o in-sample deste projeto não seleciona**. Já era o terceiro caso do mesmo padrão. E se o
+critério não seleciona, adicionar parâmetros escolhidos por ele destrói a propriedade mais
+valiosa da configuração A3: **zero parâmetros escolhidos por desempenho**.
+
+D1 e D2 ficam registrados como **teste feito e reportado**, não como escolha adotada. O código
+mantém os dois caminhos com a justificativa nos comentários.
+
+> **Ressalva sobre o racional de D1:** a justificativa a priori ("cortar redundância economiza
+> custo") está **errada**. Medido, giro e custo são invariantes ao teto (5,32% vs 5,29% de
+> giro), porque o **vol-targeting fixa o orçamento de risco** — cortar nomes redistribui o
+> mesmo risco, não o reduz. Era uma decisão de alfa disfarçada de decisão de capacidade.
+
+## 7.7.3 A bateria de evidência
+
+### O que SOBREVIVE
+
+**Placebo do gatilho** — 300 sorteios de qual nome é a cabeça do subsetor, mantendo subsetor,
+K e satélites:
+
+| métrica | real | placebo (média) | **p** |
+|---|---|---|---|
+| IC in-sample | +0,0464 | +0,0321 | **0,010** |
+| IC out-of-sample | +0,0221 | +0,0075 | **0,003** |
+| IC total | +0,0312 | +0,0168 | **<0,001** |
+| Sharpe OOS | −0,150 | −0,540 | **<0,001** |
+| bruto OOS | +1,51% | −1,85% | **<0,001** |
+
+**Escolher a cabeça pelo ADTV bate 300 cabeças sorteadas em todas as janelas.** O mecanismo é
+real: a informação flui do nome líquido para os demais do ramo.
+
+**Neutralidade de mercado** — correlação −0,01 com o Ibovespa, e nos choques:
+
+| janela | Sinapse | IBOV |
+|---|---|---|
+| **COVID (15/02–30/04/2020)** | **+2,47%** | **−29,62%** |
+| Joesley (17–19/05/2017) | −0,06% | −8,80% |
+| Americanas (jan/2023) | +0,69% | +2,36% |
+| 2022 inteiro | −7,02% | +4,97% |
+
+O dano não vem de evento de mercado — vem de **regime**: 2022–2023 corridos, sem evento
+identificável, custaram −11,7%.
+
+### O que NÃO sobrevive
+
+**Controle de persistência** (momento residual do próprio nome, mesmo universo):
+
+| janela | alfa da propagação sobre a persistência | t |
+|---|---|---|
+| IS | +1,10%/ano | +0,45 |
+| OOS | −1,03%/ano | −0,30 |
+| **total** | **+0,03%/ano** | **+0,01** |
+
+**A propagação entre nomes não se separa de "o próprio nome tem momento residual".** É a
+hipótese nula da tese, e ela não é rejeitada.
+
+**Atribuição de fator:**
+
+| controle | alfa bruto total | t |
+|---|---|---|
+| os 4 clássicos + **momento de indústria** | +2,13% | **+0,96** |
+| idem, OOS | **−0,02%** | **−0,01** |
+
+Carga em momento de indústria: **t = 6,2**. A estratégia é momento de indústria implementado
+por um caminho caro.
+
+**Deflated Sharpe** (N declarado = **294**):
+
+| série | Sharpe | **DSR** |
+|---|---|---|
+| walk-forward líquido | +0,123 | **0,005** |
+| congelada líquida | −0,034 | 0,001 |
+| congelada bruta | +0,449 | 0,069 |
+
+Reprova em todas as leituras.
+
+## 7.7.4 O NÚMERO OFICIAL — walk-forward
+
+Janela expansiva: para o ano Y, os parâmetros são re-decididos só com 2016..Y−1.
+
+| ano | Sharpe | líquido |
+|---|---|---|
+| 2019 | +0,15 | +1,19% |
+| 2020 | **+1,16** | +12,03% |
+| 2021 | +0,71 | +6,50% |
+| 2022 | −0,51 | −5,84% |
+| 2023 | −0,64 | −4,52% |
+| 2024 | +0,16 | +1,25% |
+| 2025 | −0,36 | −2,81% |
+
+| curva | Sharpe | t | líquido a.a. | vol | DD |
+|---|---|---|---|---|---|
+| **WF 2019–2025, custo realista** | **+0,123** | **+0,32** | **+1,10%** | 8,94% | −21,0% |
+| WF com custo flat de 5 bps | +0,408 | +1,07 | +3,65% | 8,93% | −14,2% |
+| WF bruto (sem custo) | +0,454 | +1,19 | +4,06% | 8,93% | −13,8% |
+
+Bootstrap em blocos de 21 pregões: **IC95% do Sharpe [−0,55; +0,90], P(SR>0) = 68%.**
+
+> **A diferença entre Sharpe 0,41 e 0,12 é inteiramente modelo de custo, não estratégia.**
+> Os dois números têm que aparecer lado a lado no deck.
+
+## 7.7.5 Painel de risco e capacidade
+
+| métrica | WF 2019–2025 |
+|---|---|
+| VaR 95 / ES 95 (1d) | −0,95% / −1,20% |
+| VaR 99 / ES 99 (1d) | −1,32% / −1,58% |
+| Sortino / Calmar | +0,175 / +0,052 |
+| underwater máximo | **1.095 pregões (4,3 anos)** |
+| dias positivos | 50,6% |
+| correlação com IBOV | −0,026 |
+| beta rolling 63d (p5/p50/p95) | −0,12 / −0,01 / +0,16 |
+| gross / net / long / short | 1,186 / −0,023 / 0,581 / 0,605 |
+| concentração (top-5 do \|P&L\|) | **13,2%** (era 79% na v1) |
+
+**Capacidade:**
+
+| AUM | Sharpe líq | líquido a.a. |
+|---|---|---|
+| R$ 20 MM | +0,008 | +0,07% |
+| R$ 100 MM | −0,034 | −0,27% |
+| R$ 300 MM | −0,049 | −0,36% |
+| R$ 1 bi | −0,085 | −0,40% |
+
+## 7.7.6 As sete ressalvas para o deck
+
+Escritas, não faladas. Se a banca achar primeiro, a credibilidade construída com a
+auto-auditoria evapora junto.
+
+1. **O Sharpe 0,45 pressupõe 5 bps.** Com o custo realista a estratégia opera no breakeven. Os
+   dois números lado a lado.
+2. **A propagação não sobrevive ao controle de persistência** (t = 0,01).
+3. **A estratégia é momento de indústria** (carga t = 6,2; alfa residual OOS = −0,02%).
+4. **O que é real é o gatilho:** a cabeça líquida bate 300 sorteios com p ≤ 0,01. A tese é
+   verdadeira — e pequena demais para pagar o custo de negociá-la.
+5. **O in-sample não seleciona.** A célula rejeitada por ambos os critérios foi a única com
+   Sharpe OOS positivo. Qualquer parâmetro escolhido por IS deve ser tratado como não escolhido.
+6. **Deflated Sharpe reprova em todas as leituras**, com N = 294 declarado.
+7. **60%+ do custo é aluguel BTC**, imune a redução de giro. É também o parâmetro mais
+   **estimado** de todos — a sensibilidade a ele deve estar no deck.
+
+---
+
 # 8. Para quem for revisar o código
 
 **Arquivos que mudaram desde a versão original:**

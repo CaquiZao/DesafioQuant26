@@ -49,6 +49,37 @@ MIN_OBS_ACUMULACAO = 120
 MIN_OBS_REGRESSAO = 200
 
 # ------------------------------------------------------------------
+# D2 -- neutralizar o sinal contra beta (decidido 16/08, so no in-sample)
+# ------------------------------------------------------------------
+# Grade pre-especificada {nao, beta, beta+setor}, criterio IC in-sample:
+#     nao         IC IS +0,0428 (t 2,15)
+#     beta        IC IS +0,0464 (t 2,51)   <- vencedor pelo criterio
+#     beta+setor  IC IS +0,0201 (t 1,24)
+#
+# CONFLITO DECLARADO: o criterio pre-especificado (IC) escolhe `beta`; o
+# Sharpe liquido escolheria `nao` (+0,263 contra +0,114). Seguimos o criterio
+# DECLARADO, nao o que da o numero melhor -- trocar depois do fato seria
+# exatamente o data snooping que o protocolo existe para bloquear.
+#
+# A explicacao do conflito e economica: o Bloco 5 ja aplica hedge de beta no
+# fim, entao neutralizar o sinal antes e parcialmente redundante, e custa
+# giro (5,48% vs 5,32%) e retorno bruto (5,62% vs 6,59%). O IC mede qualidade
+# POR NOME; o Sharpe mede o que sobra depois de negociar.
+#
+# DECISAO FINAL: NAO ADOTADO (False). Mesmo motivo do D1 em
+# `s4d_grafo_regra.py`: a grade OOS completa mostra que o in-sample deste
+# projeto nao tem poder de selecao -- a unica celula com Sharpe liquido OOS
+# positivo foi a que AMBOS os criterios rejeitaram. Adicionar um parametro
+# escolhido por um criterio que nao seleciona custa a propriedade mais
+# valiosa da configuracao (zero parametros escolhidos por desempenho) sem
+# entregar nada em troca.
+#
+# O hedge de beta do Bloco 5 continua ativo -- a neutralidade de mercado, que
+# e requisito da tese, e garantida la. Isto aqui era neutralizacao ADICIONAL
+# no sinal, e ela e redundante.
+NEUTRALIZAR_BETA = False
+
+# ------------------------------------------------------------------
 # CONTROLE POR SUBSETOR -- DESLIGADO (registro de resultado negativo)
 # ------------------------------------------------------------------
 # A hipotese era: os 10 setores da B3 sao grosseiros demais ("Materiais
@@ -464,6 +495,46 @@ def propagar_ensemble(df_choque_acum, df_grafo_mensal):
     return acumulador / max(n_var, 1)
 
 
+def neutralizar_contra_beta(df_sinal, df_betas):
+    """
+    D2: remove do sinal a parte explicada pelo beta de mercado, dia a dia.
+
+    Regressao TRANSVERSAL (nao temporal): em cada pregao, regride o sinal dos
+    nomes contra o beta deles e mantem o RESIDUO. O que sobra e, por
+    construcao, ortogonal a beta -- a carteira deixa de fazer uma aposta
+    implicita em "acoes de beta alto vs beta baixo", que a tese nao preve.
+
+    Forma fechada da regressao simples com intercepto, vetorizada por linha:
+        residuo = z - (a + b*beta),  b = cov(z,beta)/var(beta)
+    """
+    cols = [c for c in df_sinal.columns if c in df_betas.columns]
+    if not cols:
+        print("  AVISO: sem betas em comum -- neutralizacao pulada")
+        return df_sinal
+
+    Z = df_sinal[cols].replace(0.0, np.nan)
+    B = df_betas[cols].reindex(index=Z.index).astype(float)
+    valido = Z.notna() & B.notna()
+    Z = Z.where(valido)
+    B = B.where(valido)
+
+    n = valido.sum(axis=1)
+    mz = Z.mean(axis=1)
+    mb = B.mean(axis=1)
+    cov = ((Z.sub(mz, axis=0)) * (B.sub(mb, axis=0))).sum(axis=1)
+    var = ((B.sub(mb, axis=0)) ** 2).sum(axis=1)
+    b = (cov / var.where(var > 1e-12)).fillna(0.0)
+
+    residuo = Z.sub(mz, axis=0) - B.sub(mb, axis=0).mul(b, axis=0)
+    # onde a regressao nao e definida (poucos nomes), mantem o sinal original
+    residuo = residuo.where(n >= 5, Z.sub(mz, axis=0))
+
+    saida = df_sinal.copy()
+    saida[cols] = residuo.fillna(0.0)
+    print(f"  sinal neutralizado contra beta ({len(cols)} nomes)")
+    return saida
+
+
 def limpar_e_winsorizar_sinal(df_sinais_brutos):
     """
     Passo 4.4: Limpa extremos irreais e padroniza a intensidade do sinal (z-score transversal diário).
@@ -563,6 +634,11 @@ def pipeline_bloco_4():
         df_sinais_brutos = propagar_ensemble(df_choque_acum, df_grafo_mensal)
     else:
         df_sinais_brutos = montar_sinal_propagado(df_choque_acum, df_grafo)
+
+    # D2: neutralizacao ANTES do z-score (o z-score preserva a ortogonalidade
+    # porque e uma transformacao afim por linha).
+    if NEUTRALIZAR_BETA:
+        df_sinais_brutos = neutralizar_contra_beta(df_sinais_brutos, df_betas)
 
     df_sinal_final = limpar_e_winsorizar_sinal(df_sinais_brutos)
 

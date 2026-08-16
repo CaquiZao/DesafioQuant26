@@ -87,6 +87,46 @@ MIN_MEMBROS_SUBSETOR = 4
 # negocia o suficiente para o preco significar alguma coisa.
 ADTV_MINIMO = 100_000.0
 
+# ------------------------------------------------------------------
+# D1 -- teto de satelites por subsetor (decidido 16/08, so no in-sample)
+# ------------------------------------------------------------------
+# Com `alvo = todos ex-self`, TODO nao-lider de um subsetor recebe a mesma
+# soma de choques das cabecas. Medido: correlacao media de +0,884 entre
+# satelites do mesmo ramo (238 pares acima de 0,99). O sinal tem ~23
+# dimensoes independentes (uma por subsetor), nao 174 -- segurar 15 nomes
+# identicos expressa UMA aposta com o custo de quinze.
+#
+# Grade pre-especificada {3, 5, 8, 12, sem teto}, criterio Sharpe liquido
+# in-sample com custo tiered. Resultado MONOTONICO na grade inteira:
+#     teto 3 -> SR IS +0,263 | 5 -> +0,239 | 8 -> +0,163 | 12 -> +0,137
+#     sem teto -> +0,123
+#
+# RESSALVA QUE PRECISA SER DECLARADA: o racional a priori ("cortar
+# redundancia economiza custo") esta ERRADO. Medido, giro e custo sao
+# invariantes ao teto (5,32% vs 5,29% de giro; 4,76% vs 4,80% de custo),
+# porque o vol-targeting fixa o orcamento de risco -- cortar nomes
+# redistribui o mesmo risco, nao o reduz. O ganho in-sample veio do RETORNO
+# BRUTO (+6,59% vs +5,64%) e da breadth (17,0 vs 11,4).
+#
+# Ou seja: e uma decisao de ALFA disfarcada de decisao de capacidade.
+#
+# DECISAO FINAL: NAO ADOTADO (None).
+#
+# O ganho in-sample nao replicou: SR OOS -0,150 com teto contra -0,051 sem.
+# Mais importante que isso, a grade OOS completa (5 tetos x 3 neutralizacoes)
+# nao tem NENHUMA celula com Sharpe liquido positivo -- exceto exatamente a
+# que os dois criterios in-sample rejeitaram por larga margem (beta+setor:
+# SR IS -0,87, SR OOS +0,48 a +0,58). Inversao de sinal IS->OOS de manual.
+#
+# A leitura correta nao e "o teto de 3 e ruim", e "o in-sample deste projeto
+# NAO SELECIONA". E se o criterio nao seleciona, adicionar um parametro
+# escolhido por ele destroi o ativo principal desta configuracao: ter ZERO
+# parametros escolhidos por desempenho.
+#
+# Por isso D1 fica registrado como TESTE FEITO E REPORTADO, nao como escolha
+# adotada. `None` = sem teto, que e a versao sem parametro livre.
+MAX_SATELITES_SUBSETOR = None
+
 MARCADOR_VAZIO = "A DEFINIR"
 
 
@@ -168,13 +208,22 @@ def gerar_grafo_mensal(df_adtv, ticker_to_sub):
                 if len(cabeca) < 2:
                     continue
 
+                # D1: alvos = as cabecas + os MAX_SATELITES mais liquidos entre
+                # os demais. Os nao-lideres excedentes teriam sinal IDENTICO
+                # aos que ficam -- nao acrescentam aposta, so posicao.
+                nomes_cabeca = {t for t, _ in cabeca}
+                satelites = [t for t in todos if t not in nomes_cabeca]
+                if MAX_SATELITES_SUBSETOR is not None:
+                    satelites = satelites[:MAX_SATELITES_SUBSETOR]   # ja ordenado por ADTV
+                elegiveis = list(nomes_cabeca) + satelites
+
                 soma_adtv = sum(a for _, a in cabeca)
                 for peso in PESOS_CABECA:
                     variante = f"K{K}_{peso}"
                     for t_h, a_h in cabeca:
                         f = (1.0 / len(cabeca)) if peso == "igual" else (a_h / soma_adtv)
                         raiz_h = raiz_ticker(t_h)
-                        for alvo in todos:
+                        for alvo in elegiveis:
                             # ex-self E ex-mesma-empresa: PETR3 nao informa PETR4
                             if raiz_ticker(alvo) == raiz_h:
                                 continue
