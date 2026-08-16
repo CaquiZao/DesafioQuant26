@@ -460,39 +460,59 @@ def propagar_ensemble(df_choque_acum, df_grafo_mensal):
 
     Vigencia: o grafo do mes M vale para todos os pregoes de M, e foi montado
     com ADTV ate o fim de M-1 (o `shift(1)` do Bloco 4d). Sem look-ahead.
-    """
+
     variantes = sorted(df_grafo_mensal["variante"].unique())
     alvos = sorted(df_grafo_mensal["empresa_B"].unique())
     alvos = [a for a in alvos if a in df_choque_acum.columns or True]
     print(f"Propagando pelo grafo mecanico: {len(variantes)} variantes, "
           f"{len(alvos)} satelites possiveis...")
 
+    IMPLEMENTACAO VETORIZADA. A versao anterior fazia um `parcial[b] += ...`
+    por elo, dentro de um laco por mes, dentro de um laco por variante: cerca
+    de 250 mil operacoes de coluna do pandas. Isso levava minutos e inviabilizava
+    qualquer teste de reamostragem (o placebo do gatilho precisa de 300
+    propagacoes completas).
+
+    Aqui cada (variante, mes) vira UMA multiplicacao de matrizes: monta-se a
+    matriz de propagacao M (gatilhos x alvos) com as forcas, e o sinal do mes e
+    `choques[gatilhos] @ M`. Resultado identico, ordens de magnitude mais rapido.
+    """
     idx = df_choque_acum.index
     mes_do_pregao = idx.to_period("M")
-    acumulador = pd.DataFrame(0.0, index=idx, columns=alvos)
-    n_var = 0
+    col_alvo = {c: i for i, c in enumerate(alvos)}
+    col_choque = {c: i for i, c in enumerate(df_choque_acum.columns)}
 
-    for variante in variantes:
-        gv = df_grafo_mensal[df_grafo_mensal["variante"] == variante]
-        sinal_v = pd.DataFrame(0.0, index=idx, columns=alvos)
+    X = df_choque_acum.to_numpy(dtype=float, copy=True)
+    np.nan_to_num(X, copy=False)                     # choque ausente = zero
+    saida = np.zeros((len(idx), len(alvos)), dtype=float)
 
-        for mes, gm in gv.groupby("mes_vigencia"):
-            # o grafo com vigencia no mes M aplica-se aos pregoes de M
-            linhas = mes_do_pregao == pd.Period(mes, freq="M")
-            if not linhas.any():
-                continue
-            bloco = df_choque_acum.loc[linhas]
-            parcial = pd.DataFrame(0.0, index=bloco.index, columns=alvos)
-            for a, b, f, d in zip(gm["empresa_A"], gm["empresa_B"],
-                                  gm["forca"], gm["direcao"]):
-                if a in bloco.columns and b in parcial.columns:
-                    parcial[b] += bloco[a].fillna(0.0) * f * d
-            sinal_v.loc[linhas] = parcial.to_numpy()
+    g = df_grafo_mensal
+    peso = (g["forca"].to_numpy(dtype=float) * g["direcao"].to_numpy(dtype=float))
+    ia = g["empresa_A"].map(col_choque).to_numpy()
+    ib = g["empresa_B"].map(col_alvo).to_numpy()
+    valido = ~(pd.isna(ia) | pd.isna(ib))
 
-        acumulador += sinal_v
-        n_var += 1
+    n_var = max(len(variantes), 1)
+    for (mes, _var), pos in g.groupby(["mes_vigencia", "variante"]).indices.items():
+        linhas = np.flatnonzero(mes_do_pregao == pd.Period(mes, freq="M"))
+        if linhas.size == 0:
+            continue
+        sel = pos[valido[pos]]
+        if sel.size == 0:
+            continue
+        a = ia[sel].astype(int)
+        b = ib[sel].astype(int)
 
-    return acumulador / max(n_var, 1)
+        # matriz esparsa densa o suficiente: so as colunas de gatilho usadas
+        gat = np.unique(a)
+        remap = {v: i for i, v in enumerate(gat)}
+        M = np.zeros((gat.size, len(alvos)), dtype=float)
+        np.add.at(M, ([remap[v] for v in a], b), peso[sel])
+
+        saida[linhas] += X[np.ix_(linhas, gat)] @ M
+
+    resultado = pd.DataFrame(saida / n_var, index=idx, columns=alvos)
+    return resultado.replace(0.0, np.nan)
 
 
 def neutralizar_contra_beta(df_sinal, df_betas):
