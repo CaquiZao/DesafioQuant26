@@ -32,3 +32,20 @@ data/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+# Artefatos intermediarios de analise (caches de prototipagem). Sao
+# reproduziveis rodando os scripts e nao fazem parte do pipeline.
+*.pkl
+
+# Ferramental de agente instalado localmente (`npx skills add`) -- 161 skills,
+# ~2.000 arquivos e 24 MB de codigo de terceiros. Nao faz parte da estrategia
+# e nao e insumo de nenhum bloco do pipeline: reinstalavel a qualquer momento
+# pelo mesmo comando. Versionar afogaria a revisao do projeto em arquivos que
+# ninguem do time escreveu.
+.agents/
+skills-lock.json
+
+# `.claude/skills/` sao so links simbolicos para `.agents/skills/` -- link
+# quebrado em outra maquina. O resto de `.claude/` (ex: settings.json com
+# configuracao combinada do time) segue versionavel de proposito.
+.claude/skills/
