@@ -192,10 +192,25 @@ class PortfolioBuilder:
         #
         # ADTV ausente significa "nao sabemos se da para negociar", e a resposta
         # conservadora para isso e limite ZERO, nao limite infinito.
+        # SEGUNDA CORRECAO (16/08): `fillna(0)` sozinho era GROSSEIRO DEMAIS.
+        # O ADTV vem do COTAHIST, que tem calendario proprio -- ha dias que
+        # existem na matriz de pesos e nao existem no arquivo de ADTV. Nesses
+        # dias o limite virava ZERO para TODOS os tickers e a carteira inteira
+        # era LIQUIDADA, com rebuild no dia seguinte.
+        #
+        # Medido: 21 liquidacoes completas apos o aquecimento, cada uma com giro
+        # de ate 1,30 (duas pontas). A 5 bps isso e invisivel; com custo realista
+        # cada round trip custa ~0,8%.
+        #
+        # A liquidez de uma acao nao evapora porque falta uma linha no arquivo.
+        # `ffill` carrega o ultimo ADTV conhecido pelo buraco de calendario; o
+        # `fillna(0)` que sobra continua valendo para ticker que nunca teve ADTV
+        # -- que e o caso em que "nao sabemos se da para negociar" deve mesmo
+        # significar limite zero.
         if df_adtv is not None and not df_adtv.empty:
             limit_w = (df_adtv * self.max_adtv_pct) / self.aum
             limit_w, df_weights_aligned = limit_w.align(df_weights, join='right')
-            limit_w = limit_w.fillna(0.0)
+            limit_w = limit_w.ffill().fillna(0.0)
             df_weights = df_weights_aligned.clip(lower=-limit_w, upper=limit_w)
 
         # b. Trava de % Max por nome

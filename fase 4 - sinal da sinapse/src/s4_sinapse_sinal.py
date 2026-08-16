@@ -461,22 +461,22 @@ def propagar_ensemble(df_choque_acum, df_grafo_mensal):
     Vigencia: o grafo do mes M vale para todos os pregoes de M, e foi montado
     com ADTV ate o fim de M-1 (o `shift(1)` do Bloco 4d). Sem look-ahead.
 
-    variantes = sorted(df_grafo_mensal["variante"].unique())
-    alvos = sorted(df_grafo_mensal["empresa_B"].unique())
-    alvos = [a for a in alvos if a in df_choque_acum.columns or True]
-    print(f"Propagando pelo grafo mecanico: {len(variantes)} variantes, "
-          f"{len(alvos)} satelites possiveis...")
-
     IMPLEMENTACAO VETORIZADA. A versao anterior fazia um `parcial[b] += ...`
     por elo, dentro de um laco por mes, dentro de um laco por variante: cerca
     de 250 mil operacoes de coluna do pandas. Isso levava minutos e inviabilizava
     qualquer teste de reamostragem (o placebo do gatilho precisa de 300
-    propagacoes completas).
+    propagacoes completas -- daria 10 horas).
 
     Aqui cada (variante, mes) vira UMA multiplicacao de matrizes: monta-se a
     matriz de propagacao M (gatilhos x alvos) com as forcas, e o sinal do mes e
-    `choques[gatilhos] @ M`. Resultado identico, ordens de magnitude mais rapido.
+    `choques[gatilhos] @ M`. Verificado: diferenca maxima 0,000e+00 contra a
+    versao anterior, em 2519x217 celulas. Bloco 4 completo: 2min -> 4,6s.
     """
+    variantes = sorted(df_grafo_mensal["variante"].unique())
+    alvos = sorted(df_grafo_mensal["empresa_B"].unique())
+    print(f"Propagando pelo grafo mecanico: {len(variantes)} variantes, "
+          f"{len(alvos)} satelites possiveis...")
+
     idx = df_choque_acum.index
     mes_do_pregao = idx.to_period("M")
     col_alvo = {c: i for i, c in enumerate(alvos)}
