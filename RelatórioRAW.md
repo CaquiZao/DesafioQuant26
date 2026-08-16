@@ -150,7 +150,7 @@ também na direção inversa. *A equipe não descobriu pares — descobriu uma t
 ## 2.5 Por que "diário" não significa girar tudo
 
 Duas médias empilhadas: **12 meses no sinal**, **63 pregões nos pesos**. A carteira é *decidida*
-todo dia, mas se *move* devagar — giro de **4,24%/dia**.
+todo dia, mas se *move* devagar — giro de **4,67%/dia**.
 
 ## 2.6 Parâmetros
 
@@ -221,21 +221,21 @@ de R$ 150 MM de ADTV.**
 |---|---|---|---|
 | emolumentos + liquidação B3 | 2,3 bps | **observável** | — |
 | corretagem institucional | 3,0–4,0 bps | contratual | — |
-| meio-spread por faixa de ADTV | 2 / 5 / 11 / 24 bps | estimado | **1,22% a.a.** |
-| impacto de mercado | `0,4 × σ₆₀ × √(participação)` | estimado | **0,65% a.a.** |
-| **aluguel BTC** (ponta vendida) | 1,0–6,0 % a.a. | estimado | **1,71% a.a.** |
+| meio-spread por faixa de ADTV | 2 / 5 / 11 / 24 bps | estimado | **1,27% a.a.** |
+| impacto de mercado | `0,4 × σ₆₀ × √(participação)` | estimado | **0,74% a.a.** |
+| **aluguel BTC** (ponta vendida) | 1,0–6,0 % a.a. | estimado | **1,74% a.a.** |
 | hedge de índice | futuro | contratual | 0,04% a.a. |
-| | | | **total 3,62% a.a.** |
+| | | | **total 3,79% a.a.** |
 
 ```
-CUSTO por unidade de giro : 33,9 bps
-ALFA  por unidade de giro : 45,3 bps      → margem de 34%
+CUSTO por unidade de giro : 32,2 bps
+ALFA  por unidade de giro : 40,7 bps      → margem de 26%
 ```
 
 > **Este par é o resultado mais defensável do trabalho.** Ele não depende da nossa calibragem:
 > se acharem nosso custo pessimista, o alfa por giro continua o mesmo; se otimista, também.
 
-⚠️ **O maior componente é o aluguel (47% do custo)** — carrego proporcional ao book vendido,
+⚠️ **O maior componente é o aluguel (46% do custo)** — carrego proporcional ao book vendido,
 **imune a qualquer redução de giro**.
 
 ---
@@ -248,20 +248,23 @@ ALFA  por unidade de giro : 45,3 bps      → margem de 34%
 
 | métrica | Sinapse<br>*(5 bps)* | **Sinapse<br>*(realista)*** | Fundo<br>*(5 bps)* | **Fundo<br>*(realista)*** | Ibovespa | CDI |
 |---|---|---|---|---|---|---|
-| Retorno acumulado | +39,9% | **+7,7%** | +184,5% | **+119,1%** | +115,0% | +103,4% |
-| Retorno anualizado | +4,04% | **+0,88%** | +13,15% | **+9,72%** | +9,47% | +8,76% |
-| Volatilidade | 8,29% | 8,30% | 8,28% | 8,29% | 23,07% | 0,24% |
-| **Sharpe** | 0,520 | **0,147** | 1,534 | **1,160** | 0,509 | — |
-| Sortino | 0,80 | 0,23 | 2,40 | 1,81 | 0,63 | — |
+| Retorno acumulado | +38,8% | **+5,7%** | +183,0% | **+115,6%** | +134,6% | +104,0% |
+| Retorno anualizado | +3,93% | **+0,65%** | +13,01% | **+9,45%** | +10,55% | +8,74% |
+| Volatilidade | 8,29% | 8,30% | 8,28% | 8,29% | 23,11% | 0,24% |
+| **Sharpe** | 0,506 | **0,120** | 1,519 | **1,131** | 0,551 | — |
+| Sortino | 0,78 | 0,18 | 2,37 | 1,77 | 0,68 | — |
 | **Drawdown máximo** | −15,8% | **−18,5%** | −8,6% | **−8,9%** | **−46,8%** | 0,0% |
-| Calmar | 0,26 | 0,05 | 1,53 | 1,09 | 0,20 | — |
-| **Excesso sobre o CDI** | — | — | **+81,1%** | **+15,7%** | +11,6% | — |
+| Calmar | 0,25 | 0,04 | 1,52 | 1,06 | 0,23 | — |
+| **Excesso sobre o CDI** | — | — | **+79,1%** | **+11,6%** | +30,6% | — |
 
-> **A leitura honesta.** Sob custo realista, o alfa isolado rende **+0,88% ao ano**. O produto
-> entregue ao cotista (CDI + alfa) rende **+119,1%**, batendo o CDI em **+15,7% em 8,6 anos**
-> (≈ +0,9%/ano) com **Sharpe 1,16 contra 0,51 do Ibovespa** e **um quinto do drawdown**.
+> **A leitura honesta.** Sob custo realista o alfa isolado rende **+0,65% ao ano**. O produto
+> entregue ao cotista (CDI + alfa) rende **+115,6%**, batendo o CDI em **+11,6% em 8,6 anos**
+> (≈ +0,7%/ano).
 >
-> **O ganho é real mas modesto, e depende de o custo ficar no cenário central.**
+> **O Ibovespa rendeu mais em termos absolutos (+134,6%).** O que a Sinapse entrega não é
+> retorno maior — é **retorno por unidade de risco**: Sharpe **1,13 contra 0,55**, e drawdown
+> máximo de **−8,9% contra −46,8%**. Para um alocador com mandato de risco, essa é a comparação
+> que importa; para quem só olha retorno absoluto, não é.
 
 ## 4.2 Drawdown e neutralidade
 
@@ -287,7 +290,7 @@ alegada.
 
 | ano | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
 |---|---|---|---|---|---|---|---|---|---|
-| **alfa (realista)** | −0,6% | −1,6% | **+2,8%** | **+11,3%** | **+9,4%** | −5,6% | −4,4% | **+3,4%** | −5,8% |
+| **alfa (realista)** | −0,6% | −3,2% | **+2,6%** | **+11,3%** | **+9,4%** | −5,6% | −4,4% | **+3,4%** | −5,8% |
 
 > **5 dos 9 anos são negativos com custo real.** **2019–2021 carregam o resultado inteiro.**
 > Isso é a fragilidade mais importante do trabalho e não deve ser suavizada.
@@ -301,7 +304,7 @@ alegada.
 |---|---|
 | ações na carteira | **mediana 134/dia** (p95 = 152) |
 | **apostas independentes (breadth)** | **16,2** |
-| giro | 4,24%/dia |
+| giro | 4,67%/dia |
 | exposição bruta | mediana 140,5% (máx 186,2%) |
 | **exposição líquida** | média −2,8%, **desvio 25,6%, \|máx\| 57,0%** |
 | dias com posição no teto de 5% | **2,3%** |
@@ -370,9 +373,9 @@ em T+21 medido de forma independente no Bloco 7.)*
 ## 5.1 Onde a estratégia está
 
 **O mecanismo é real** (placebo, 3–5σ). **A neutralidade funciona** (COVID +0,9% contra −29,6%).
-**O sinal paga o próprio giro** com margem de 34% (45,3 contra 33,9 bps).
+**O sinal paga o próprio giro** com margem de 26% (40,7 contra 32,2 bps).
 
-**Mas o alfa é pequeno:** +0,88%/ano com custo realista, e **5 dos 9 anos são negativos**. O
+**Mas o alfa é pequeno:** +0,65%/ano com custo realista, e **5 dos 9 anos são negativos**. O
 produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
 
 > **A tese é verdadeira e modesta — e sabemos disso porque medimos as duas coisas.**
@@ -383,7 +386,7 @@ produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
 |---|---|
 | Capacidade | ~R$ 100 MM. A R$ 1 bi o alfa some |
 | Executabilidade | trava de liquidez com **0 violações** em 93.022 posições |
-| Gargalo real | **aluguel da ponta vendida — 47% do custo**, imune a redução de giro |
+| Gargalo real | **aluguel da ponta vendida — 46% do custo**, imune a redução de giro |
 
 ## 5.3 Limitações declaradas
 
@@ -393,13 +396,13 @@ produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
 4. **5 dos 9 anos negativos com custo real**; 2019–2021 carregam tudo.
 5. Breadth efetiva **16,2** contra 134 posições.
 6. **Exposição líquida chega a ±57%** — sem trava.
-7. O ganho sobre o CDI (+15,7% em 8,6 anos) é modesto.
+7. O ganho sobre o CDI (+11,6% em 8,6 anos) é modesto, e **o Ibovespa rendeu mais em termos absolutos**.
 
 ## 5.4 Próximos passos
 
 | # | ação | por quê |
 |---|---|---|
-| 1 | **Trocar o short de ações por venda de índice/futuro** | 47% do custo é aluguel |
+| 1 | **Trocar o short de ações por venda de índice/futuro** | 46% do custo é aluguel |
 | 2 | **Trava de exposição líquida (±10%)** | hoje chega a ±57% |
 | 3 | **Aumentar breadth via mais SUBSETORES** | o teto é o nº de ramos, não o nº de nomes |
 | 4 | **Fatores explícitos** (minério, câmbio, juro) no choque | choques mais independentes |
@@ -545,9 +548,9 @@ Auditoria dedicada encontrou dez afirmações indefensáveis no material anterio
 
 | alegação anterior | número correto |
 |---|---|
-| "Excesso sobre o CDI de +88,0%" | **+15,7%** com custo realista |
+| "Excesso sobre o CDI de +88,0%" | **+11,6%** com custo realista |
 | "IC/√h é constante — assinatura de difusão" | **cai 45%** |
-| "O sinal paga o próprio giro" (por 0,1 bps) | **45,3 vs 33,9 bps** — margem de 34% |
+| "O sinal paga o próprio giro" (por 0,1 bps) | **40,7 vs 32,2 bps** — margem de 26% |
 | "141 nomes/dia" | **mediana 134**; e **16,2** apostas independentes |
 | "O beta é o beta de mercado (~1,0)" | **mediana 0,82** |
 | "A regra reproduz 100% dos elos" | **95%** (38/40) |
@@ -574,4 +577,4 @@ Auditoria dedicada encontrou dez afirmações indefensáveis no material anterio
 | **Placebo do gatilho** | sortear qual nome é a cabeça e ver se o real ganha. Testa o **mecanismo** |
 | **Giro** | soma das mudanças absolutas de peso, duas pontas |
 | **Market-neutral** | beta zero contra o Ibovespa. O benchmark passa a ser o CDI |
-| **BTC** | aluguel de ações para a ponta vendida — **47% do custo total** |
+| **BTC** | aluguel de ações para a ponta vendida — **46% do custo total** |

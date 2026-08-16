@@ -139,6 +139,29 @@ class PortfolioBuilder:
         negociavel = df_returns.reindex(
             index=df_weights.index, columns=df_weights.columns
         ).notna()
+
+        # GUARDA DE FERIADO (16/08). A base de retornos contem linhas de dias
+        # em que a bolsa NAO abriu -- 02/11 (Finados), 15/10, etc. -- com um ou
+        # dois tickers preenchidos por ruido de fonte. Sem esta guarda, a
+        # mascara lia isso como "130 acoes pararam de negociar de uma vez" e
+        # ZERAVA a carteira inteira, com rebuild completo no dia seguinte.
+        #
+        # Medido: 11 liquidacoes completas, giro de ate 1,77 num unico dia
+        # (duas pontas). A 5 bps era quase invisivel; com custo realista cada
+        # evento custa ~0,5%.
+        #
+        # O criterio nao e calibrado: num pregao real ~335 tickers tem retorno;
+        # nesses dias, UM. Qualquer corte entre os dois separa o feriado do
+        # evento de mercado. 10% da mediana e conservador com folga -- nao ha
+        # dia real de bolsa em que 90% do universo pare de negociar.
+        por_dia = negociavel.sum(axis=1)
+        limiar = max(por_dia.median() * 0.10, 1.0)
+        dia_util = por_dia >= limiar
+        if (~dia_util).any():
+            print(f"  mascara de negociabilidade: {int((~dia_util).sum())} dia(s) sem "
+                  f"pregao efetivo preservados (nao se liquida a carteira em feriado)")
+        negociavel = negociavel.where(dia_util, other=True, axis=0)
+
         return df_weights.where(negociavel, 0.0)
 
     def _estimar_vol_portfolio(self, df_weights, df_returns):
