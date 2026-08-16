@@ -35,6 +35,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DATA_DIR = os.path.join(BASE_DIR, "data")
 SAIDA = os.path.join(BASE_DIR, "fase 7 - relatorio", "saida")
 DIAS = 252
+AUM = 100_000_000   # mesmo AUM do Bloco 3, exigido pelo modelo de custo
 
 # ------------------------------------------------------------------
 # Paleta (validada) e chrome
@@ -128,6 +129,19 @@ def rotulo_direto(ax, x, y, texto, cor, dx=6):
 # ==================================================================
 
 def carregar():
+    """
+    Recalcula o P&L a partir dos pesos, com os DOIS regimes de custo.
+
+    POR QUE NAO BASTA LER `curvas_diarias.parquet`: aquele arquivo traz apenas
+    o custo linear de 5 bps. Esse numero e de LARGE CAP LIQUIDA -- 79% do giro
+    deste book esta abaixo de R$150MM de ADTV. Sob o custo realista (spread por
+    faixa + impacto + aluguel BTC), o excesso sobre o CDI vai de +88,0% para
+    -2,6%: a estrategia NAO bate o CDI.
+    """
+    import sys
+    sys.path.insert(0, os.path.join(BASE_DIR, "fase 3 - backtest", "src"))
+    import s3b_custos
+
     d = {}
     d["curvas"] = pd.read_parquet(os.path.join(DATA_DIR, "backtest", "curvas_diarias.parquet"))
     d["pesos"] = pd.read_parquet(os.path.join(DATA_DIR, "df_weights_sinapse.parquet"))
@@ -138,12 +152,40 @@ def carregar():
     caminho_grafo = os.path.join(DATA_DIR, "grafo_regra_mensal.parquet")
     d["grafo"] = pd.read_parquet(caminho_grafo) if os.path.exists(caminho_grafo) else None
 
-    # serie de retorno da estrategia e do fundo
-    c = d["curvas"]
-    d["r_estrategia"] = c["patrimonio_estrategia"].pct_change().dropna()
-    d["r_ibov"] = c["patrimonio_ibovespa"].pct_change().dropna()
-    d["r_cdi"] = c["patrimonio_cdi"].pct_change().dropna()
-    d["r_fundo"] = d["r_estrategia"].add(d["r_cdi"], fill_value=0.0)
+    ibov = pd.read_parquet(os.path.join(DATA_DIR, "precos", "indices_retornos.parquet"))["IBOV"]
+    R = d["retornos"].copy()
+    R["IBOV_SYNTHETIC"] = ibov.reindex(R.index)
+    R = R.loc[~R["IBOV_SYNTHETIC"].isna()]      # mesma protecao do Bloco 3
+
+    datas = d["pesos"].index.intersection(R.index)
+    W = d["pesos"].loc[datas].sort_index()
+    R = R.loc[datas].sort_index()
+
+    d["bruto"] = (W.fillna(0) * R.fillna(0)).sum(axis=1)
+    d["giro"] = W.fillna(0).diff().abs().sum(axis=1)
+
+    custo_real, comp = s3b_custos.custo_por_dia(W, d["adtv"], R, AUM)
+    d["custo_real"] = custo_real.reindex(d["bruto"].index).fillna(0.0)
+    d["comp_custo"] = comp
+    d["custo_flat"] = d["giro"] * 0.0005
+
+    # As duas leituras, no MESMO indice de datas (o desalinhamento entre
+    # `pesos` e `giro` era a origem do "33,6 bps" -- o correto e 32,2).
+    d["r_flat"] = d["bruto"] - d["custo_flat"]
+    d["r_real"] = d["bruto"] - d["custo_real"]
+    d["r_estrategia"] = d["r_flat"]              # leitura de referencia
+
+    d["r_ibov"] = ibov.reindex(datas).fillna(0.0)
+    d["r_cdi"] = d["cdi"].reindex(datas).fillna(0.0)
+    d["r_fundo"] = d["r_flat"] + d["r_cdi"]
+    d["r_fundo_real"] = d["r_real"] + d["r_cdi"]
+
+    # Periodo ATIVO: antes de mai/2017 nao ha posicao (aquecimento de 252d de
+    # regressao + 231d de acumulacao). Incluir esses dias dilui a vol e o
+    # Sharpe artificialmente.
+    ativo = (W.abs().sum(axis=1) > 1e-9)
+    d["primeiro_ativo"] = ativo.idxmax()
+    d["mask_ativo"] = ativo
     return d
 
 
@@ -206,21 +248,49 @@ def g_curva(d):
 # ==================================================================
 
 def g_drawdown(d):
-    fig, ax = fig169(12.8, 6.4)
-    for nome, r, cor in [("Sinapse", d["r_estrategia"], C["sinapse"]),
-                         ("Ibovespa", d["r_ibov"], C["ibov"]),
-                         ("CDI", d["r_cdi"], C["cdi"])]:
+    """
+    Painéis separados em vez de sobrepostos.
+
+    Sobrepor Sinapse (−18%) e Ibovespa (−47%) no mesmo eixo esmaga a primeira
+    contra o zero e torna a comparação ilegível. Painéis empilhados com escalas
+    próprias mostram a FORMA de cada um; a comparação de magnitude fica na
+    anotação, que é onde ela pertence.
+    """
+    a = d["mask_ativo"]
+    # O CDI nao entra: por construcao ele nunca tem drawdown, e um painel reto
+    # em zero rouba um terco do grafico para nao dizer nada. Fica na legenda.
+    series = [("Sinapse", d["r_real"][a], C["sinapse"]),
+              ("Ibovespa", d["r_ibov"][a], C["ibov"])]
+
+    fig, axes = plt.subplots(2, 1, figsize=(12.8, 7.0), dpi=110, sharex=True,
+                             gridspec_kw={"hspace": 0.30})
+    minimos = {}
+    for ax, (nome, r, cor) in zip(axes, series):
         c = (1 + r).cumprod()
         dd = c / c.cummax() - 1
-        ax.plot(dd.index, dd.values, color=cor, linewidth=1.8, label=nome)
-        ax.fill_between(dd.index, dd.values, 0, color=cor, alpha=0.10)
-        rotulo_direto(ax, dd.idxmin(), dd.min(), f"  mín {dd.min():.1%}", cor)
+        minimos[nome] = dd.min()
+        ax.fill_between(dd.index, dd.values, 0, color=cor, alpha=0.22)
+        ax.plot(dd.index, dd.values, color=cor, linewidth=1.6)
+        ax.axhline(0, color=C["eixo"], linewidth=1)
+        ax.yaxis.set_major_formatter(PCT)
+        ax.set_ylim(dd.min() * 1.32, dd.max() * 0.02 if dd.max() > 0 else 0.004)
 
-    ax.yaxis.set_major_formatter(PCT)
-    ax.axhline(0, color=C["eixo"], linewidth=1)
-    titulo(ax, "Drawdown — quanto se perde do topo anterior",
-           "A neutralidade de mercado aparece aqui: o pior momento da Sinapse é uma fração do Ibovespa.")
-    ax.legend(loc="lower left", fontsize=10)
+        # marca o vale, com rotulo que nao colide com a curva
+        ax.plot([dd.idxmin()], [dd.min()], marker="o", markersize=9, color=cor,
+                markerfacecolor=C["surface"], markeredgewidth=2.4, zorder=5)
+        ax.annotate(f"{dd.min():.1%}", xy=(dd.idxmin(), dd.min()), xytext=(10, 4),
+                    textcoords="offset points", fontsize=12, fontweight="700", color=cor)
+        ax.text(0.998, 0.08, nome, transform=ax.transAxes, ha="right", fontsize=13,
+                fontweight="700", color=cor)
+
+    razao = minimos["Ibovespa"] / minimos["Sinapse"]
+    axes[0].set_title("Drawdown — quanto se perde do topo anterior",
+                      fontsize=15, fontweight="600", loc="left", pad=46)
+    axes[0].text(0, 1.02, f"Escalas independentes, para que a FORMA de cada série seja legível. "
+                          f"O pior momento do Ibovespa é {razao:.1f}× o da Sinapse.\n"
+                          "O CDI não aparece porque, por construção, nunca tem drawdown.",
+                 transform=axes[0].transAxes, fontsize=10, color=C["tinta2"],
+                 va="bottom", linespacing=1.45)
     return salvar(fig, "02_drawdown")
 
 
@@ -229,28 +299,50 @@ def g_drawdown(d):
 # ==================================================================
 
 def g_anual(d):
-    anos = sorted(set(d["r_estrategia"].index.year))
-    dados = {n: [] for n in ["Sinapse", "Ibovespa", "CDI"]}
-    for a in anos:
-        for nome, r in [("Sinapse", d["r_estrategia"]), ("Ibovespa", d["r_ibov"]), ("CDI", d["r_cdi"])]:
-            rr = r[r.index.year == a]
-            dados[nome].append((1 + rr).prod() - 1 if len(rr) else np.nan)
+    """Barras agrupadas com valor em TODAS as barras, e só anos com posição."""
+    a = d["mask_ativo"]
+    anos = [y for y in sorted(set(d["r_real"].index.year))
+            if a[a.index.year == y].sum() > 20]
+    fontes = [("Sinapse", d["r_real"], C["sinapse"]),
+              ("Ibovespa", d["r_ibov"], C["ibov"]),
+              ("CDI", d["r_cdi"], C["cdi"])]
+    dados = {n: [(1 + r[r.index.year == y]).prod() - 1 for y in anos] for n, r, _ in fontes}
 
-    fig, ax = fig169(12.8, 6.4)
+    fig, ax = fig169(13.4, 6.8)
     x = np.arange(len(anos)); w = 0.27
-    for i, (nome, cor) in enumerate([("Sinapse", C["sinapse"]), ("Ibovespa", C["ibov"]), ("CDI", C["cdi"])]):
-        ax.bar(x + (i - 1) * w, dados[nome], w * 0.92, label=nome, color=cor,
-               edgecolor=C["surface"], linewidth=1.5)
-    for j, v in enumerate(dados["Sinapse"]):
-        ax.annotate(f"{v:+.1%}", (x[j] - w, v), textcoords="offset points",
-                    xytext=(0, 4 if v >= 0 else -13), ha="center", fontsize=8.5,
-                    color=C["tinta2"], fontweight="600")
+    for i, (nome, _, cor) in enumerate(fontes):
+        pos = x + (i - 1) * w
+        ax.bar(pos, dados[nome], w * 0.88, label=nome, color=cor,
+               edgecolor=C["surface"], linewidth=1.6, zorder=3)
+        # valor em TODAS as barras, com fonte menor nas de referencia
+        for xi, v in zip(pos, dados[nome]):
+            ax.annotate(f"{v:+.0%}" if abs(v) >= 0.10 else f"{v:+.1%}",
+                        (xi, v), textcoords="offset points",
+                        xytext=(0, 5 if v >= 0 else -14), ha="center",
+                        fontsize=9.5 if nome == "Sinapse" else 8,
+                        fontweight="700" if nome == "Sinapse" else "500",
+                        color=cor if nome == "Sinapse" else C["neutro"], zorder=4)
 
-    ax.set_xticks(x); ax.set_xticklabels(anos)
-    ax.axhline(0, color=C["eixo"], linewidth=1.2)
+    # faixa de destaque nos anos que carregam o resultado
+    for y in (2019, 2020, 2021):
+        if y in anos:
+            j = anos.index(y)
+            ax.axvspan(j - 0.5, j + 0.5, color=C["sinapse"], alpha=0.05, zorder=0)
+    if 2019 in anos:
+        ax.annotate("2019–2021 carregam o resultado",
+                    xy=(anos.index(2020), max(dados["Sinapse"]) * 1.14),
+                    ha="center", fontsize=10, color=C["sinapse"], fontweight="700")
+
+    ax.set_xticks(x); ax.set_xticklabels(anos, fontsize=11.5)
+    ax.axhline(0, color=C["tinta"], linewidth=1.4, zorder=2)
     ax.yaxis.set_major_formatter(PCT)
-    titulo(ax, "Retorno por ano", "O alfa da Sinapse é pequeno e pouco correlacionado — não segue o ciclo do Ibovespa.")
-    ax.legend(loc="upper left", ncol=3, fontsize=10)
+    ax.set_ylim(min(min(v) for v in dados.values()) * 1.35,
+                max(max(v) for v in dados.values()) * 1.30)
+    ax.set_axisbelow(True)
+    titulo(ax, "Retorno por ano — alfa da Sinapse com custo realista",
+           "O melhor ano da Sinapse (2020) foi o pior do Ibovespa; o pior dela (2025) foi um dos melhores dele.\n"
+           "Isso é descorrelação. Mas 5 dos 9 anos são negativos com custo real.")
+    ax.legend(loc="upper left", ncol=3, fontsize=10.5)
     return salvar(fig, "03_performance_anual")
 
 
@@ -465,35 +557,74 @@ def g_distribuicao(d):
 # ==================================================================
 
 def g_fluxograma(_):
-    fig, ax = plt.subplots(figsize=(12.8, 7.2), dpi=110)
+    """
+    Três colunas, fluxo de cima para baixo dentro de cada uma e da esquerda
+    para a direita entre elas. Setas nunca cruzam caixa nem texto.
+    """
+    fig, ax = plt.subplots(figsize=(13.4, 7.4), dpi=110)
     ax.set_xlim(0, 100); ax.set_ylim(0, 100); ax.axis("off"); ax.grid(False)
 
+    LARG, ALT = 27.0, 17.5
+    COL = {"A": 3.0, "B": 36.5, "C": 70.0}
+    LIN = {1: 66.0, 2: 43.0, 3: 20.0}
+
     caixas = [
-        (6, 78, "1. DADOS", "COTAHIST (B3) + yfinance\n543 tickers · 2016-2025\nsem viés de sobrevivência", C["neutro"]),
-        (6, 55, "2. CHOQUE LIMPO", "retorno = α + β·IBOV + ε\nrolling 252 pregões\nε = o que é da empresa", C["sinapse"]),
-        (6, 32, "3. HORIZONTE", "acumula ε em 12-1 meses\n(231 pregões, defasados 22)\nIC/√h constante = difusão", C["sinapse"]),
-        (38, 78, "4. GRAFO MECÂNICO", "mensal, por subsetor:\ncabeça = mais líquidos (ADTV)\ncabeça → todos, ex-self", C["fundo"]),
-        (38, 55, "5. PROPAGAÇÃO", "sinal_B = Σ ε_A × força\nensemble de 6 variantes\nwinsoriza + z-score", C["fundo"]),
-        (38, 32, "6. CARTEIRA", "vol-target 12% <-> travas\nsuaviza pesos 63d\nhedge de beta · lag T+1", C["cdi"]),
-        (70, 55, "7. BACKTEST", "P&L = Σ(peso × retorno)\n− custo em 3 camadas\nspread + impacto + aluguel", C["ibov"]),
-        (70, 32, "8. VALIDAÇÃO", "walk-forward · placebo\nDeflated Sharpe · atribuição\nIS/OOS congelado", C["ibov"]),
+        (COL["A"], LIN[1], "1 · DADOS", C["neutro"],
+         ["COTAHIST (B3) + yfinance", "543 tickers · 2016–2025", "sem viés de sobrevivência"]),
+        (COL["A"], LIN[2], "2 · CHOQUE LIMPO", C["sinapse"],
+         ["retorno = α + β·IBOV + ε", "regressão móvel de 252d", "ε = o que é da empresa"]),
+        (COL["A"], LIN[3], "3 · HORIZONTE", C["sinapse"],
+         ["acumula ε em 12–1 meses", "231 pregões, defasados 22", "difusão, não choque de 1 dia"]),
+        (COL["B"], LIN[1], "4 · GRAFO MECÂNICO", C["fundo"],
+         ["mensal, por subsetor", "cabeça = mais líquidos (ADTV)", "cabeça → todos, ex-self"]),
+        (COL["B"], LIN[2], "5 · PROPAGAÇÃO", C["fundo"],
+         ["sinal_B = Σ ε_A × força", "ensemble de 6 variantes", "winsoriza + z-score"]),
+        (COL["B"], LIN[3], "6 · CARTEIRA", C["cdi"],
+         ["vol-target 12% e travas", "suaviza pesos 63d", "hedge de beta · lag T+1"]),
+        (COL["C"], LIN[2], "7 · BACKTEST", C["ibov"],
+         ["P&L = Σ(peso × retorno)", "− custo em 3 camadas", "spread, impacto, aluguel"]),
+        (COL["C"], LIN[3], "8 · VALIDAÇÃO", C["ibov"],
+         ["walk-forward · placebo", "Deflated Sharpe", "atribuição de fator"]),
     ]
-    for x, y, t, sub, cor in caixas:
-        ax.add_patch(mpatches.FancyBboxPatch((x, y), 26, 17, boxstyle="round,pad=0.6,rounding_size=1.6",
-                                             linewidth=2, edgecolor=cor, facecolor=cor + "14"))
-        ax.text(x + 1.6, y + 13.4, t, fontsize=11.5, fontweight="700", color=cor)
-        ax.text(x + 1.6, y + 2.4, sub, fontsize=9.2, color=C["tinta2"], va="bottom", linespacing=1.5)
+    for x, y, t, cor, itens in caixas:
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (x, y), LARG, ALT, boxstyle="round,pad=0.5,rounding_size=1.4",
+            linewidth=2.2, edgecolor=cor, facecolor=cor + "12", zorder=2))
+        ax.text(x + 1.8, y + ALT - 4.4, t, fontsize=11.5, fontweight="700", color=cor, zorder=3)
+        for k, linha in enumerate(itens):
+            ax.text(x + 1.8, y + ALT - 8.6 - k * 3.9, linha, fontsize=9.3,
+                    color=C["tinta2"], zorder=3)
 
-    seta = dict(arrowstyle="-|>", color=C["neutro"], linewidth=1.8, mutation_scale=16)
-    for a, b in [((19, 78), (19, 72)), ((19, 55), (19, 49)),
-                 ((32, 40), (38, 60)), ((51, 78), (51, 72)), ((51, 55), (51, 49)),
-                 ((64, 63), (70, 63)), ((83, 55), (83, 49))]:
-        ax.annotate("", xy=b, xytext=a, arrowprops=seta)
+    seta = dict(arrowstyle="-|>", color=C["neutro"], linewidth=2.0,
+                mutation_scale=17, shrinkA=0, shrinkB=0)
+    mx = {c: COL[c] + LARG / 2 for c in COL}
+    caminhos = [
+        ((mx["A"], LIN[1]), (mx["A"], LIN[2] + ALT)),          # 1 -> 2
+        ((mx["A"], LIN[2]), (mx["A"], LIN[3] + ALT)),          # 2 -> 3
+        ((COL["A"] + LARG, LIN[3] + ALT / 2), (COL["B"], LIN[2] + ALT / 2)),   # 3 -> 5
+        ((mx["B"], LIN[1]), (mx["B"], LIN[2] + ALT)),          # 4 -> 5
+        ((mx["B"], LIN[2]), (mx["B"], LIN[3] + ALT)),          # 5 -> 6
+        ((COL["B"] + LARG, LIN[3] + ALT / 2), (COL["C"], LIN[2] + ALT / 2)),   # 6 -> 7
+        ((mx["C"], LIN[2]), (mx["C"], LIN[3] + ALT)),          # 7 -> 8
+    ]
+    for a, b in caminhos:
+        ax.annotate("", xy=b, xytext=a, arrowprops=seta, zorder=1)
 
-    ax.text(0, 97, "Fluxo da estratégia — do dado bruto à posição executada",
-            fontsize=16, fontweight="700", color=C["tinta"])
-    ax.text(0, 93, "Cada bloco é um script independente e reexecutável. O motor de backtest não decide nada — só multiplica pesos por retornos.",
+    ax.text(0, 93, "Fluxo da estratégia — do dado bruto à posição executada",
+            fontsize=16.5, fontweight="700", color=C["tinta"])
+    ax.text(0, 87.5, "Cada bloco é um script independente e reexecutável. "
+                     "O motor de backtest não decide nada: recebe a matriz de pesos pronta e multiplica por retornos.",
             fontsize=10.5, color=C["tinta2"])
+
+    ax.add_patch(mpatches.FancyBboxPatch((3, 4), 95, 9.5,
+                                         boxstyle="round,pad=0.5,rounding_size=1.2",
+                                         linewidth=1.6, edgecolor=C["eixo"],
+                                         facecolor=C["grade"] + "55", zorder=2))
+    ax.text(5, 9.6, "Sem look-ahead em nenhum ponto (auditado):", fontsize=10.5,
+            fontweight="700", color=C["tinta"], zorder=3)
+    ax.text(5, 5.6, "o grafo do mês M usa ADTV até o fim de M−1  ·  o choque do dia t usa só dados ≤ t  ·  "
+                    "a covariância exclui o próprio dia  ·  a decisão de t é executada em t+1",
+            fontsize=9.6, color=C["tinta2"], zorder=3)
     return salvar(fig, "10_fluxograma_pipeline")
 
 
@@ -555,7 +686,9 @@ def g_regra(_):
 # ==================================================================
 
 def g_custo(d):
-    comp = {"spread + taxas": 1.46, "impacto de mercado": 1.06, "aluguel (BTC)": 1.45, "hedge": 0.05}
+    ano = d["comp_custo"].mean() * DIAS * 100
+    comp = {"spread + taxas": ano["spread_taxas"], "impacto de mercado": ano["impacto"],
+            "aluguel (BTC)": ano["aluguel"], "hedge": ano["hedge"]}
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(12.8, 5.6), dpi=110,
                                  gridspec_kw={"wspace": 0.3, "width_ratios": [1.1, 1]})
 
@@ -568,7 +701,9 @@ def g_custo(d):
     a1.grid(axis="x"); a1.set_axisbelow(True)
     titulo(a1, "Custo real, decomposto", f"Total {sum(vals):.2f}% ao ano · 60%+ é aluguel no período recente")
 
-    alfa, custo = 33.7, 33.6
+    g = d["giro"].mean()
+    alfa = d["bruto"].mean() / g * 1e4
+    custo = d["custo_real"].mean() / g * 1e4
     a2.bar(["alfa gerado", "custo pago"], [alfa, custo], color=[C["bom"], C["ruim"]],
            width=0.5, edgecolor=C["surface"], linewidth=2)
     for i, v in enumerate([alfa, custo]):
@@ -585,25 +720,57 @@ def g_custo(d):
 # ==================================================================
 
 def t_metricas(d):
-    linhas = ["| métrica | Sinapse (alfa) | Fundo (CDI+alfa) | Ibovespa | CDI |",
-              "|---|---|---|---|---|"]
-    m = {n: metricas(r) for n, r in [("sin", d["r_estrategia"]), ("fun", d["r_fundo"]),
-                                     ("ibo", d["r_ibov"]), ("cdi", d["r_cdi"])]}
+    """
+    A tabela principal do relatorio -- e ela precisa das DUAS leituras de custo.
+
+    Publicar so a coluna de 5 bps seria o erro mais grave possivel: sob o custo
+    que o proprio projeto argumenta ser o correto, o excesso sobre o CDI vai de
+    +88,0% para -2,6%. Os dois numeros vao lado a lado, sempre.
+    """
+    a = d["mask_ativo"]
+    m = {
+        "flat": metricas(d["r_flat"][a]),
+        "real": metricas(d["r_real"][a]),
+        "f_flat": metricas(d["r_fundo"][a]),
+        "f_real": metricas(d["r_fundo_real"][a]),
+        "ibo": metricas(d["r_ibov"][a]),
+        "cdi": metricas(d["r_cdi"][a]),
+    }
+    cdi_tot = m["cdi"]["retorno_total"]
+
+    linhas = [
+        "| métrica | Sinapse<br>*(custo 5 bps)* | **Sinapse<br>*(custo realista)*** | Fundo<br>*(5 bps)* | **Fundo<br>*(realista)*** | Ibovespa | CDI |",
+        "|---|---|---|---|---|---|---|"]
     campos = [("Retorno acumulado", "retorno_total", "{:+.1%}"),
               ("Retorno anualizado", "retorno_ano", "{:+.2%}"),
               ("Volatilidade anualizada", "vol", "{:.2%}"),
-              ("Sharpe anualizado", "sharpe", "{:.2f}"),
+              ("Sharpe anualizado", "sharpe", "{:.3f}"),
               ("Sharpe diário", "sharpe_diario", "{:.4f}"),
               ("Sortino", "sortino", "{:.2f}"),
               ("Drawdown máximo", "mdd", "{:.1%}"),
               ("Calmar", "calmar", "{:.2f}")]
     for rot, k, f in campos:
         vs = []
-        for c in ["sin", "fun", "ibo", "cdi"]:
+        for c in ["flat", "real", "f_flat", "f_real", "ibo", "cdi"]:
             v = m[c].get(k, np.nan)
             vs.append(f.format(v) if pd.notna(v) else "—")
         linhas.append(f"| {rot} | " + " | ".join(vs) + " |")
-    return salvar_md("\n".join(linhas), "13_tabela_metricas_periodo")
+
+    exc_flat = m["f_flat"]["retorno_total"] - cdi_tot
+    exc_real = m["f_real"]["retorno_total"] - cdi_tot
+    linhas.append(f"| **Excesso sobre o CDI** | — | — | **{exc_flat:+.1%}** | "
+                  f"**{exc_real:+.1%}** | {m['ibo']['retorno_total']-cdi_tot:+.1%} | — |")
+
+    nota = (f"\n\n> **Período:** {d['primeiro_ativo']:%d/%m/%Y} em diante — antes disso não há "
+            "posição (252 pregões de regressão + 231 de acumulação de aquecimento).\n\n"
+            "> **As duas colunas de custo são obrigatórias.** `5 bps` é a premissa usual de "
+            "backtest, calibrada para large cap líquida. `realista` aplica meio-spread por faixa "
+            "de ADTV, impacto de mercado e aluguel (BTC) da ponta vendida — e **79% do giro deste "
+            "book está abaixo de R$ 150 MM de ADTV**.\n\n"
+            f"> **A conclusão honesta:** sob custo realista o fundo entrega {exc_real:+.1%} contra "
+            "o CDI. **A estratégia não bate o benchmark.** O que sobrevive é o mecanismo (ver "
+            "placebo), não o retorno líquido.")
+    return salvar_md("\n".join(linhas) + nota, "13_tabela_metricas_periodo")
 
 
 def t_anual(d):
@@ -612,8 +779,8 @@ def t_anual(d):
     n_pos = (w[acoes].abs() > 1e-6).sum(axis=1)
     giro = w.fillna(0).diff().abs().sum(axis=1)
 
-    linhas = ["| ano | alfa Sinapse | fundo (CDI+alfa) | CDI | Ibovespa | Sharpe | Sortino | MDD | vol | Calmar | ações | giro/dia |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    linhas = ["| ano | alfa<br>*(5 bps)* | **alfa<br>*(realista)*** | fundo<br>*(realista)* | CDI | Ibovespa | Sharpe<br>*(5bps)* | MDD | vol | ações | giro/dia |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for a in sorted(set(d["r_estrategia"].index.year)):
         r = d["r_estrategia"][d["r_estrategia"].index.year == a]
         c = d["r_cdi"][d["r_cdi"].index.year == a]
@@ -623,11 +790,12 @@ def t_anual(d):
         if len(r) < 20 or (n_pos[n_pos.index.year == a].mean() or 0) < 1:
             continue
         mm = metricas(r)
+        rr = d["r_real"][d["r_real"].index.year == a]
         linhas.append(
-            f"| {a} | {(1+r).prod()-1:+.2%} | {(1+r.add(c, fill_value=0)).prod()-1:+.2%} | "
-            f"{(1+c).prod()-1:+.2%} | {(1+ib).prod()-1:+.2%} | "
-            f"{mm['sharpe']:.2f} | {mm['sortino']:.2f} | {mm['mdd']:.1%} | {mm['vol']:.1%} | "
-            f"{mm['calmar']:.2f} | {n_pos[n_pos.index.year == a].mean():.0f} | "
+            f"| {a} | {(1+r).prod()-1:+.2%} | **{(1+rr).prod()-1:+.2%}** | "
+            f"{(1+rr.add(c, fill_value=0)).prod()-1:+.2%} | {(1+c).prod()-1:+.2%} | "
+            f"{(1+ib).prod()-1:+.2%} | {mm['sharpe']:.2f} | {mm['mdd']:.1%} | {mm['vol']:.1%} | "
+            f"{n_pos[n_pos.index.year == a].mean():.0f} | "
             f"{giro[giro.index.year == a].mean():.1%} |")
     nota = ("\n\n> **Por que 2016 não aparece:** o sinal exige 252 pregões de regressão mais 231 de "
             "acumulação — cerca de dois anos de aquecimento. A estratégia só tem posição a partir de 2017.\n\n"
