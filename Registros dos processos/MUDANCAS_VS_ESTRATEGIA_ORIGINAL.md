@@ -483,6 +483,89 @@ candidatas: **Matriz de Insumo-Produto do IBGE** (oficial, por ano, mapeia quem 
 
 ---
 
+# 7.6 IMPLEMENTADO em 16/08 — a configuração A3 em produção
+
+Tag do estado anterior: **`v1-pre-A3`** (commit `9efbb7b`). Backup em `data_v1_backup/`.
+
+## O que foi implementado
+
+| # | mudança | arquivo |
+|---|---|---|
+| M0 | **choque só-mercado** (`ret = α + β·IBOV + ε`) — sai o regressor SETOR | `s4:calcular_choque_mercado` (novo) |
+| M2 | **universo 73 → 543 tickers** regredidos (297/dia de cobertura) | idem, regressão vetorizada |
+| M6/M7 | **horizonte 12-1** (231 pregões, defasados 22) no lugar da média móvel de 21d | `s4:acumular_choque` (novo) |
+| M3→A3 | **grafo mecânico**, reconstruído mensalmente, ensemble de 6 variantes | `s4d_grafo_regra.py` (novo) |
+| M9 | **força = 1, direção = +1** — implícito na regra | idem |
+| M1.1 | resíduo NaN em vez de retorno bruto (`min_count=1`) | `s4:233` |
+| M1.2 | posição sem beta válido é **zerada**, não hedgeada com beta 0 | `s5:_apply_beta_hedge` |
+| M1.3 | `clip` com limite NaN passa a cortar (`limit_w.fillna(0)`) | `s5:_apply_institutional_locks` |
+| M1.4 | `s11` não duplica mais os 28 elos históricos (+ assert) | `s11:189` |
+| M1.5 | winsorização vetorizada — idêntica, 14x mais rápida | `s4:limpar_e_winsorizar_sinal` |
+| — | suavização de pesos **10 → 63 pregões** | `s5:__init__` |
+
+## Verificação do critério de aceite
+
+```
+elos same-subsetor no grafo manual : 40
+reproduzidos pela regra mecânica   : 38/40  (95%)
+também na direção inversa (mútuos) : 38/40  (95%)
+```
+
+Os dois não reproduzidos (`GOLL4→AZUL4`, `RADL3→PGMN3`) caem no filtro de subsetor com
+menos de 4 membros — restrição a priori, não ajuste.
+
+> **O grafo escrito à mão está 95% contido no que uma regra mecânica gera.** O time não
+> descobriu pares; descobriu uma topologia.
+
+## Resultado medido — antes vs depois
+
+| | v1 (baseline) | **v2 (A3)** |
+|---|---|---|
+| Retorno bruto | +4,19%/ano | +4,04%/ano |
+| Custo (a 5 bps) | −1,36%/ano | **−0,60%/ano** |
+| **Alfa líquido** | +2,83%/ano | **+3,44%/ano** |
+| **Sharpe** | 0,36 | **0,45** |
+| Volatilidade | 7,84% | 7,64% |
+| **Drawdown máximo** | −19,6% | **−15,8%** |
+| **Giro diário** | 10,8% | **4,8%** |
+| Correlação com Ibovespa | −0,01 | **−0,01** |
+| nomes/dia | 35 | **141** |
+| breadth efetiva | 11,3 | **14,2** |
+| **dias com posição no teto de 5%** | **77,0%** | **3,3%** |
+| Retorno do fundo (CDI + alfa) | +210,1% | **+229,9%** |
+| **Excesso sobre o CDI** | +68,1% | **+88,0%** |
+
+**A trava de 5% deixou de morder** (77,0% → 3,3% dos dias). Era o gargalo aritmético
+identificado em P4: com 11,3 apostas e teto de 5%, a vol máxima era 7,2%. Com breadth maior
+o teto some — e a exposição bruta pôde subir de 85% para 149% sem violar nada.
+
+**A neutralidade de mercado se mantém** (correlação −0,01 com o Ibovespa), que é requisito
+da tese: o benchmark é o CDI, não o Ibovespa.
+
+## Ressalvas honestas sobre esta implementação
+
+1. **Os números ficaram abaixo do protótipo** (Sharpe 0,45 contra 0,496 previsto). A causa
+   provável é a construção de carteira: o protótipo usava peso ∝ z com neutralização, e a
+   produção mantém o laço vol-targeting ↔ travas. Ver o item em aberto abaixo.
+2. **A breadth subiu menos que o previsto** (14,2 contra 24,9). Com 217 satélites possíveis e
+   K até 5, muitos nomes do mesmo ramo recebem sinal quase idêntico — a razão
+   efetiva/nominal caiu de 23% para 7,4%. Mais posições não é mais breadth.
+3. **O giro ficou em 4,8%/dia**, não nos 1,3% do protótipo, porque o grafo mensal introduz
+   rotação própria a cada reconstrução.
+
+## O que falta
+
+| fase | o quê |
+|---|---|
+| §7.1 | decidir neutralização do sinal contra beta — **só no IS**, congelado |
+| 4 | modelo de custo realista (tiered + impacto + aluguel BTC) |
+| 5 | evidência: placebo do gatilho, controle de persistência, atribuição de fator, Deflated Sharpe, stress, painel de risco |
+| 6 | `CRITERIOS_GRAFO_MANUAL.md` (direção documentada ≠ CSV), `PARAMETROS.md` §6, deck |
+
+O número oficial ainda deve sair do **walk-forward**, não desta rodada.
+
+---
+
 # 8. Para quem for revisar o código
 
 **Arquivos que mudaram desde a versão original:**
