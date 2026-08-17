@@ -215,7 +215,13 @@ def gerar_grafo_mensal(df_adtv, ticker_to_sub):
                 satelites = [t for t in todos if t not in nomes_cabeca]
                 if MAX_SATELITES_SUBSETOR is not None:
                     satelites = satelites[:MAX_SATELITES_SUBSETOR]   # ja ordenado por ADTV
-                elegiveis = list(nomes_cabeca) + satelites
+                # ORDEM DETERMINISTICA: `list(set)` segue o PYTHONHASHSEED, que
+                # e aleatorizado por processo -- 26% das linhas saiam em ordem
+                # diferente a cada execucao. Hoje e inofensivo (a propagacao usa
+                # `np.add.at`, que e comutativo, e o sinal sai bit-a-bit igual),
+                # mas basta um `drop_duplicates` ou `groupby(sort=False)` a
+                # jusante para o resultado passar a oscilar sem motivo.
+                elegiveis = [t for t, _ in cabeca] + satelites
 
                 soma_adtv = sum(a for _, a in cabeca)
                 for peso in PESOS_CABECA:

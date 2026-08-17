@@ -1,10 +1,10 @@
 # SINAPSE — Relatório Completo da Estratégia
 
 > **Documento-mestre.** Versão longa, para ser comprimida no PPT de 5 páginas.
-> Estado final do código (commit `6c757ba`). **Todos os números saem de uma única execução do
+> Estado final do código (commit `e2dd70e` + correção da causa raiz de calendário). **Todos os números saem de uma única execução do
 > pipeline** e conferem com os gráficos e tabelas em `fase 7 - relatorio/saida/`.
 >
-> **Janela de avaliação: 17/05/2017 a 30/12/2025 — 2.132 pregões.** Antes disso a carteira está
+> **Janela de avaliação: 19/05/2017 a 30/12/2025 — 2.140 pregões.** Antes disso a carteira está
 > vazia: o sinal exige 252 pregões de regressão + 231 de acumulação de aquecimento. Incluir os
 > 14 meses sem posição diluiria artificialmente a volatilidade e o Sharpe.
 
@@ -98,7 +98,7 @@ retorno_VALE = α + β · Ibovespa + ε      ← regressão móvel de 252 pregõ
 
 ⚠️ **Ressalva medida:** o β tem **mediana 0,82**, não ~1,0. O viés vem de negociação
 não-sincronizada nos 543 tickers. É o beta que o hedge usa, e ele funciona (correlação final com
-o Ibovespa: **−0,01**), mas dizer que "é o beta de mercado puro" seria forte demais.
+o Ibovespa: **−0,015**), mas dizer que "é o beta de mercado puro" seria forte demais.
 
 ## 2.2 O horizonte
 
@@ -150,7 +150,7 @@ também na direção inversa. *A equipe não descobriu pares — descobriu uma t
 ## 2.5 Por que "diário" não significa girar tudo
 
 Duas médias empilhadas: **12 meses no sinal**, **63 pregões nos pesos**. A carteira é *decidida*
-todo dia, mas se *move* devagar — giro de **4,67%/dia**.
+todo dia, mas se *move* devagar — giro de **3,08%/dia**.
 
 ## 2.6 Parâmetros
 
@@ -195,20 +195,35 @@ regressão vetorizada foi verificada contra `lstsq` — erro máximo **1,8e-15**
 | Mapa setorial 79% vazio | alfa +11,6% → **+27,9%** |
 | Resíduo virava retorno bruto sem 252 obs | 13,4% das células — **100% de 2016** |
 | Beta NaN tratado como zero no hedge | 13,6% das posições **sem hedge** |
-| **Buraco de calendário do ADTV liquidava a carteira** | **21 liquidações completas** → 0 |
+| Buraco de calendário do ADTV liquidava a carteira | 21 liquidações → 0 |
+| **CAUSA RAIZ: 36 feriados-fantasma do yfinance** | **giro de 2018: 13,5%/dia → 3,0%/dia** |
 
 Cada correção tem **teste que falha no código antigo e passa no novo**.
 
-> **Dois destes merecem destaque, porque incomodam.**
+> **Três destes merecem destaque, porque incomodam.**
 >
-> O bug do resíduo **inflava o t in-sample do nosso próprio protocolo**, de 1,39 para 2,14 —
-> corrigi-lo **enfraqueceu nossa própria evidência**.
+> **O resíduo inflava nossa própria evidência.** O bug de `min_count` elevava o t in-sample do
+> protocolo de validação de 1,39 para 2,14. Corrigi-lo **enfraqueceu o que tínhamos.**
 >
-> O bug do ADTV foi **introduzido ao corrigir outro**: ao consertar o `clip` com limite NaN,
-> tratamos "ADTV ausente" como limite zero. Isso está certo para um ticker que não negocia, mas
-> o ADTV vem do COTAHIST, que tem calendário próprio — em 4 dias ausentes do arquivo, o limite
-> zerava **para todos** e a carteira era liquidada por inteiro. A 5 bps era invisível; **foi o
-> custo realista que o expôs.**
+> **Um bug foi introduzido ao corrigir outro.** Ao consertar o `clip` com limite NaN, tratamos
+> "ADTV ausente" como limite zero — certo para um ticker que não negocia, errado para uma data
+> inteira ausente do arquivo.
+>
+> **E os três primeiros tinham a mesma causa raiz, que só apareceu na quarta rodada.** O painel
+> do yfinance contém **36 datas que não são pregão na B3** (Carnaval, Corpus Christi, Finados,
+> Consciência Negra). 27 delas vêm com preço `NaN`, e o `pct_change` propaga esse `NaN` para o
+> **primeiro pregão real seguinte** — em 25 dias legítimos, apenas ~50 dos 214 tickers tinham
+> retorno, contra mediana de 158. O Bloco 5 lia isso como "110 ações pararam de negociar" e
+> liquidava o book.
+>
+> Foi por isso que corrigir os três sintomas, um a um, **quase não mexeu no resultado**: eles
+> disparavam nas mesmas datas e eram redundantes entre si. A correção é filtrar o painel pelo
+> calendário oficial do COTAHIST **antes** do `pct_change`. Efeito: giro de 2018 de **13,5% para
+> 3,0%/dia**, e **21 liquidações espúrias vão a zero**.
+>
+> **Nenhum destes seria visível a 5 bps.** Uma liquidação + rebuild custa ~0,02% naquela premissa
+> e ~0,55% com custo realista. **O modelo de custo não piorou a estratégia — ele encontrou quatro
+> erros que estavam lá desde sempre.**
 
 ## 3.4 Custo de transação — três camadas
 
@@ -221,21 +236,21 @@ de R$ 150 MM de ADTV.**
 |---|---|---|---|
 | emolumentos + liquidação B3 | 2,3 bps | **observável** | — |
 | corretagem institucional | 3,0–4,0 bps | contratual | — |
-| meio-spread por faixa de ADTV | 2 / 5 / 11 / 24 bps | estimado | **1,27% a.a.** |
-| impacto de mercado | `0,4 × σ₆₀ × √(participação)` | estimado | **0,74% a.a.** |
-| **aluguel BTC** (ponta vendida) | 1,0–6,0 % a.a. | estimado | **1,74% a.a.** |
-| hedge de índice | futuro | contratual | 0,04% a.a. |
-| | | | **total 3,79% a.a.** |
+| meio-spread por faixa de ADTV | 2 / 5 / 11 / 24 bps | estimado | **0,87% a.a.** |
+| impacto de mercado | `0,4 × σ₆₀ × √(participação)` | estimado | **0,23% a.a.** |
+| **aluguel BTC** (ponta vendida) | 1,0–6,0 % a.a. | estimado | **1,71% a.a.** |
+| hedge de índice | futuro | contratual | 0,03% a.a. |
+| | | | **total 2,84% a.a.** |
 
 ```
-CUSTO por unidade de giro : 32,2 bps
-ALFA  por unidade de giro : 40,7 bps      → margem de 26%
+CUSTO por unidade de giro : 36,6 bps
+ALFA  por unidade de giro : 68,3 bps      → folga de 1,87x
 ```
 
 > **Este par é o resultado mais defensável do trabalho.** Ele não depende da nossa calibragem:
 > se acharem nosso custo pessimista, o alfa por giro continua o mesmo; se otimista, também.
 
-⚠️ **O maior componente é o aluguel (46% do custo)** — carrego proporcional ao book vendido,
+⚠️ **O maior componente é o aluguel (60% do custo)** — carrego proporcional ao book vendido,
 **imune a qualquer redução de giro**.
 
 ---
@@ -248,36 +263,41 @@ ALFA  por unidade de giro : 40,7 bps      → margem de 26%
 
 | métrica | Sinapse<br>*(5 bps)* | **Sinapse<br>*(realista)*** | Fundo<br>*(5 bps)* | **Fundo<br>*(realista)*** | Ibovespa | CDI |
 |---|---|---|---|---|---|---|
-| Retorno acumulado | +38,8% | **+5,7%** | +183,0% | **+115,6%** | +134,6% | +104,0% |
-| Retorno anualizado | +3,93% | **+0,65%** | +13,01% | **+9,45%** | +10,55% | +8,74% |
-| Volatilidade | 8,29% | 8,30% | 8,28% | 8,29% | 23,11% | 0,24% |
-| **Sharpe** | 0,506 | **0,120** | 1,519 | **1,131** | 0,551 | — |
-| Sortino | 0,78 | 0,18 | 2,37 | 1,77 | 0,68 | — |
-| **Drawdown máximo** | −15,8% | **−18,5%** | −8,6% | **−8,9%** | **−46,8%** | 0,0% |
-| Calmar | 0,25 | 0,04 | 1,52 | 1,06 | 0,23 | — |
-| **Excesso sobre o CDI** | — | — | **+79,1%** | **+11,6%** | +30,6% | — |
+| Retorno acumulado | +47,3% | **+19,6%** | +200,2% | **+143,7%** | +161,6% | +103,7% |
+| Retorno anualizado | +4,67% | **+2,13%** | +13,82% | **+11,06%** | +11,99% | +8,74% |
+| Volatilidade | 8,29% | 8,29% | 8,28% | 8,28% | 22,91% | 0,24% |
+| Retorno / volatilidade | 0,592 | 0,296 | 1,605 | 1,308 | 0,610 | — |
+| **SHARPE** *(excesso sobre o CDI)* | — | — | **0,592** | **0,296** | **0,244** | — |
+| Sortino | 0,92 | 0,46 | 2,50 | 2,03 | 0,76 | — |
+| **Drawdown máximo** | −15,8% | **−18,5%** | −8,6% | **−8,8%** | **−46,8%** | 0,0% |
+| Calmar | 0,30 | 0,12 | 1,61 | 1,25 | 0,26 | — |
+| **Excesso sobre o CDI** | — | — | **+96,4%** | **+40,0%** | +57,8% | — |
 
-> **A leitura honesta.** Sob custo realista o alfa isolado rende **+0,65% ao ano**. O produto
-> entregue ao cotista (CDI + alfa) rende **+115,6%**, batendo o CDI em **+11,6% em 8,6 anos**
-> (≈ +0,7%/ano).
+> **A leitura honesta, e as duas linhas de "Sharpe" existem de propósito.**
 >
-> **O Ibovespa rendeu mais em termos absolutos (+134,6%).** O que a Sinapse entrega não é
-> retorno maior — é **retorno por unidade de risco**: Sharpe **1,13 contra 0,55**, e drawdown
-> máximo de **−8,9% contra −46,8%**. Para um alocador com mandato de risco, essa é a comparação
-> que importa; para quem só olha retorno absoluto, não é.
+> `Retorno / volatilidade` **não é Sharpe** — não desconta a taxa livre. Publicá-lo sob o nome
+> "Sharpe" infla a comparação com o Ibovespa (1,31 contra 0,61). **O Sharpe de verdade, com o
+> CDI como taxa livre, é 0,296 contra 0,244.** A Sinapse ganha, mas por margem estreita.
+>
+> Sob custo realista o alfa isolado rende **+2,13% ao ano**. O produto entregue ao cotista
+> (CDI + alfa) rende **+143,7%**, batendo o CDI em **+40,0% em 8,6 anos**.
+>
+> **O Ibovespa rendeu mais em termos absolutos (+161,6%)** — e com 22,9% de volatilidade contra
+> 8,3%, e drawdown de **−46,8% contra −8,8%**. Para um alocador com mandato de risco, a
+> comparação que importa é a segunda; para quem só olha retorno absoluto, a Sinapse perde.
 
 ## 4.2 Drawdown e neutralidade
 
 ![drawdown](fase%207%20-%20relatorio/saida/02_drawdown.png)
 ![distribuição](fase%207%20-%20relatorio/saida/09_distribuicao_neutralidade.png)
 
-**Correlação com o Ibovespa: −0,012.** A nuvem não tem inclinação — a neutralidade é medida, não
+**Correlação com o Ibovespa: −0,015.** A nuvem não tem inclinação — a neutralidade é medida, não
 alegada.
 
 | janela de stress | Sinapse | Ibovespa |
 |---|---|---|
-| **COVID (fev–abr/2020)** | **+0,89%** | **−29,62%** |
-| Joesley (mai/2017) | −0,04% | −8,80% |
+| **COVID (fev–abr/2020)** | **+1,40%** | **−29,62%** |
+| Joesley (mai/2017) | 0,00% | −8,80% |
 | Americanas (jan/2023) | −0,49% | +3,18% |
 | **2022 inteiro** | **−5,62%** | +4,97% |
 
@@ -290,10 +310,11 @@ alegada.
 
 | ano | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
 |---|---|---|---|---|---|---|---|---|---|
-| **alfa (realista)** | −0,6% | −3,2% | **+2,6%** | **+11,3%** | **+9,4%** | −5,6% | −4,4% | **+3,4%** | −5,8% |
+| **alfa (realista)** | **+1,8%** | **+4,6%** | **+2,9%** | **+13,5%** | **+9,4%** | −5,6% | −4,4% | **+3,4%** | −5,8% |
 
-> **5 dos 9 anos são negativos com custo real.** **2019–2021 carregam o resultado inteiro.**
-> Isso é a fragilidade mais importante do trabalho e não deve ser suavizada.
+> **3 dos 9 anos são negativos com custo real** (era 5 antes da correção de calendário: 2017 e
+> 2018 eram negativos *por causa do bug*). **2022, 2023 e 2025 seguem negativos** — a
+> fragilidade enfraqueceu, mas não desapareceu, e não deve ser suavizada.
 
 ## 4.4 Carteira e execução
 
@@ -303,10 +324,10 @@ alegada.
 | | |
 |---|---|
 | ações na carteira | **mediana 134/dia** (p95 = 152) |
-| **apostas independentes (breadth)** | **16,2** |
-| giro | 4,67%/dia |
-| exposição bruta | mediana 140,5% (máx 186,2%) |
-| **exposição líquida** | média −2,8%, **desvio 25,6%, \|máx\| 57,0%** |
+| **apostas independentes (breadth)** | **16,1** |
+| giro | 3,08%/dia |
+| exposição bruta | mediana 140,2% (máx 186,2%) |
+| **exposição líquida** | média −2,3%, **desvio 25,1%, \|máx\| 57,0%** |
 | dias com posição no teto de 5% | **2,3%** |
 | concentração (top-5 do P&L) | **13,2%** |
 
@@ -324,7 +345,7 @@ Ver `saida/15_tabela_sinais_exemplo.md` — a carteira **não entra e sai** de p
 ![rolling](fase%207%20-%20relatorio/saida/08_rolling_sharpe_vol.png)
 ![heatmap](fase%207%20-%20relatorio/saida/07_heatmap_mensal.png)
 
-Vol móvel de 63d: mediana **7,56%**, p95 12,45%, **máximo 13,71% (abr/2020)**, e **7,1% dos dias
+Vol móvel de 63d: mediana **7,54%**, p95 12,43%, **máximo 13,63% (abr/2020)**, e **7,0% dos dias
 acima do teto de 12%**. O estouro é limitação do **estimador** de covariância (janela de 60
 pregões com peso igual demora a reagir a mudança de regime), não do parâmetro.
 
@@ -373,9 +394,9 @@ em T+21 medido de forma independente no Bloco 7.)*
 ## 5.1 Onde a estratégia está
 
 **O mecanismo é real** (placebo, 3–5σ). **A neutralidade funciona** (COVID +0,9% contra −29,6%).
-**O sinal paga o próprio giro** com margem de 26% (40,7 contra 32,2 bps).
+**O sinal paga o próprio giro** com folga de **1,87×** (68,3 contra 36,6 bps).
 
-**Mas o alfa é pequeno:** +0,65%/ano com custo realista, e **5 dos 9 anos são negativos**. O
+**Mas o alfa é modesto:** +2,13%/ano com custo realista, e **5 dos 9 anos são negativos**. O
 produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
 
 > **A tese é verdadeira e modesta — e sabemos disso porque medimos as duas coisas.**
@@ -386,15 +407,15 @@ produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
 |---|---|
 | Capacidade | ~R$ 100 MM. A R$ 1 bi o alfa some |
 | Executabilidade | trava de liquidez com **0 violações** em 93.022 posições |
-| Gargalo real | **aluguel da ponta vendida — 46% do custo**, imune a redução de giro |
+| Gargalo real | **aluguel da ponta vendida — 60% do custo**, imune a redução de giro |
 
 ## 5.3 Limitações declaradas
 
 1. Deflated Sharpe reprova (N = 294).
 2. A propagação não faz spanning sobre o momento residual (t = 0,01).
 3. Carga em momento de indústria t = 6,2.
-4. **5 dos 9 anos negativos com custo real**; 2019–2021 carregam tudo.
-5. Breadth efetiva **16,2** contra 134 posições.
+4. **3 dos 9 anos negativos com custo real** (2022, 2023, 2025).
+5. Breadth efetiva **16,1** contra 134 posições.
 6. **Exposição líquida chega a ±57%** — sem trava.
 7. O ganho sobre o CDI (+11,6% em 8,6 anos) é modesto, e **o Ibovespa rendeu mais em termos absolutos**.
 
@@ -402,7 +423,7 @@ produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
 
 | # | ação | por quê |
 |---|---|---|
-| 1 | **Trocar o short de ações por venda de índice/futuro** | 46% do custo é aluguel |
+| 1 | **Trocar o short de ações por venda de índice/futuro** | 60% do custo é aluguel |
 | 2 | **Trava de exposição líquida (±10%)** | hoje chega a ±57% |
 | 3 | **Aumentar breadth via mais SUBSETORES** | o teto é o nº de ramos, não o nº de nomes |
 | 4 | **Fatores explícitos** (minério, câmbio, juro) no choque | choques mais independentes |
@@ -577,4 +598,4 @@ Auditoria dedicada encontrou dez afirmações indefensáveis no material anterio
 | **Placebo do gatilho** | sortear qual nome é a cabeça e ver se o real ganha. Testa o **mecanismo** |
 | **Giro** | soma das mudanças absolutas de peso, duas pontas |
 | **Market-neutral** | beta zero contra o Ibovespa. O benchmark passa a ser o CDI |
-| **BTC** | aluguel de ações para a ponta vendida — **46% do custo total** |
+| **BTC** | aluguel de ações para a ponta vendida — **60% do custo total** |

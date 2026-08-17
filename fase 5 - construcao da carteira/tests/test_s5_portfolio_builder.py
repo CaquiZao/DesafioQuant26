@@ -202,3 +202,40 @@ def test_beta_neutrality():
     port_beta_original = w1 * 1.5 + w2 * 0.5
     assert np.isclose(port_beta_original + w_ibov, 0.0)
 
+
+
+def test_feriado_nao_liquida_a_carteira():
+    """Dia sem pregao efetivo nao pode zerar a carteira inteira.
+
+    A base de retornos contem linhas de feriado com um ou dois tickers
+    preenchidos por ruido de fonte. Sem guarda, a mascara de negociabilidade
+    lia isso como "todo mundo parou de negociar" e liquidava o book, com
+    rebuild completo no dia seguinte -- 21 liquidacoes espurias medidas em
+    producao, e o giro de 2018 em 13,5%/dia contra ~3% nos outros anos.
+
+    Este teste fixa o comportamento nos DOIS sentidos: preserva no feriado,
+    e continua zerando quem de fato deslistou (ver o teste anterior).
+    """
+    np.random.seed(11)
+    n, k = 120, 40
+    tickers = [f'T{i:02d}' for i in range(k)]
+    df_returns = pd.DataFrame(np.random.randn(n, k) * 0.02, columns=tickers)
+
+    # Dia 60 e "feriado": so 1 dos 40 tickers tem retorno.
+    feriado = 60
+    df_returns.iloc[feriado, 1:] = np.nan
+
+    df_zscore = pd.DataFrame(np.random.randn(n, k) * 2, columns=tickers)
+
+    pb = PortfolioBuilder(aum=100e6, janela_suavizacao_pesos=5)
+    df_w = pb.build_portfolio(df_zscore, df_returns, df_adtv=None,
+                              df_betas=None, df_sectors=None).dropna()
+
+    acoes = [c for c in df_w.columns if c != 'IBOV_SYNTHETIC']
+    gross = df_w[acoes].abs().sum(axis=1)
+    # o peso do dia t vem da decisao de t-1, entao o feriado aparece em t+1
+    if feriado + 1 in gross.index:
+        vizinhanca = gross.loc[feriado - 2:feriado + 3]
+        assert gross.loc[feriado + 1] > 0.5 * vizinhanca.median(), (
+            f"carteira liquidada no feriado: gross {gross.loc[feriado+1]:.4f} "
+            f"contra mediana {vizinhanca.median():.4f} da vizinhanca")

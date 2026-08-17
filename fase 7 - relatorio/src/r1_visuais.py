@@ -728,6 +728,11 @@ def t_metricas(d):
     +88,0% para -2,6%. Os dois numeros vao lado a lado, sempre.
     """
     a = d["mask_ativo"]
+    # DUAS convencoes, rotuladas: `retorno/vol` (sem taxa livre) e SHARPE de
+    # verdade (excesso sobre o CDI). Publicar retorno/vol sob o nome "Sharpe"
+    # inflava a comparacao com o Ibovespa -- 0,551 em vez de 0,244 -- e era o
+    # unico numero do material que mudava de definicao entre dois scripts.
+    rf = d["r_cdi"]
     m = {
         "flat": metricas(d["r_flat"][a]),
         "real": metricas(d["r_real"][a]),
@@ -735,6 +740,11 @@ def t_metricas(d):
         "f_real": metricas(d["r_fundo_real"][a]),
         "ibo": metricas(d["r_ibov"][a]),
         "cdi": metricas(d["r_cdi"][a]),
+    }
+    sh_cdi = {
+        "f_flat": metricas(d["r_fundo"][a], rf)["sharpe"],
+        "f_real": metricas(d["r_fundo_real"][a], rf)["sharpe"],
+        "ibo": metricas(d["r_ibov"][a], rf)["sharpe"],
     }
     cdi_tot = m["cdi"]["retorno_total"]
 
@@ -744,8 +754,7 @@ def t_metricas(d):
     campos = [("Retorno acumulado", "retorno_total", "{:+.1%}"),
               ("Retorno anualizado", "retorno_ano", "{:+.2%}"),
               ("Volatilidade anualizada", "vol", "{:.2%}"),
-              ("Sharpe anualizado", "sharpe", "{:.3f}"),
-              ("Sharpe diário", "sharpe_diario", "{:.4f}"),
+              ("Retorno / volatilidade", "sharpe", "{:.3f}"),
               ("Sortino", "sortino", "{:.2f}"),
               ("Drawdown máximo", "mdd", "{:.1%}"),
               ("Calmar", "calmar", "{:.2f}")]
@@ -753,8 +762,16 @@ def t_metricas(d):
         vs = []
         for c in ["flat", "real", "f_flat", "f_real", "ibo", "cdi"]:
             v = m[c].get(k, np.nan)
-            vs.append(f.format(v) if pd.notna(v) else "—")
+            # Sharpe do proprio CDI nao significa nada -- fica em branco.
+            if c == "cdi" and k in ("sharpe", "sortino", "calmar"):
+                vs.append("—")
+            else:
+                vs.append(f.format(v) if pd.notna(v) else "—")
         linhas.append(f"| {rot} | " + " | ".join(vs) + " |")
+
+    linhas.append(f"| **SHARPE** *(excesso sobre o CDI)* | — | — | "
+                  f"**{sh_cdi['f_flat']:.3f}** | **{sh_cdi['f_real']:.3f}** | "
+                  f"**{sh_cdi['ibo']:.3f}** | — |")
 
     exc_flat = m["f_flat"]["retorno_total"] - cdi_tot
     exc_real = m["f_real"]["retorno_total"] - cdi_tot

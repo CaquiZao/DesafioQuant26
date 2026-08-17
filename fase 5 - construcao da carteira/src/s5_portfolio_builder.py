@@ -154,9 +154,35 @@ class PortfolioBuilder:
         # nesses dias, UM. Qualquer corte entre os dois separa o feriado do
         # evento de mercado. 10% da mediana e conservador com folga -- nao ha
         # dia real de bolsa em que 90% do universo pare de negociar.
+        # Referencia MOVEL, nao mediana global: o universo cresce ao longo do
+        # tempo (46 nomes em 2017, 152 em 2022), entao uma mediana global
+        # subestima o limiar no fim da amostra e o superestima no comeco.
+        #
+        # O limiar de 10% da mediana global tinha uma ZONA CEGA de 24 dias: em
+        # pregoes reais contaminados por feriado fantasma do yfinance a
+        # cobertura caia para ~51 nomes, acima do corte de 15,8 -- e a guarda
+        # nao disparava. Com a causa raiz corrigida em `s1_precos.py` isso nao
+        # deveria mais acontecer; esta camada e a defesa em profundidade.
+        #
+        # 60% da mediana movel: medido, o MENOR valor de cobertura/mediana
+        # movel entre dias legitimos e 93,4%. O corte tem folga de 33 pontos
+        # percentuais -- nao existe risco de falso positivo.
+        # DUAS condicoes, e a segunda existe porque a primeira sozinha tem
+        # falso positivo: num universo pequeno, UMA acao deslistando derruba a
+        # cobertura tanto quanto um feriado. Foi o teste
+        # `test_acao_delistada_nao_carrega_posicao_fantasma` (2 tickers) que
+        # expos isso -- a guarda preservava o peso da acao morta.
+        #
+        # "Cobertura desabou" so distingue feriado de deslistagem quando a
+        # secao transversal e grande o bastante para a estatistica significar
+        # alguma coisa. Com 158 nomes, uma acao morrendo move 0,6%; com 2
+        # nomes, move 50%.
+        MIN_UNIVERSO_GUARDA = 20
         por_dia = negociavel.sum(axis=1)
-        limiar = max(por_dia.median() * 0.10, 1.0)
-        dia_util = por_dia >= limiar
+        referencia = (por_dia.rolling(252, min_periods=20).median()
+                      .fillna(por_dia.median()))
+        dia_util = (por_dia >= (referencia * 0.60).clip(lower=1.0)) | \
+                   (referencia < MIN_UNIVERSO_GUARDA)
         if (~dia_util).any():
             print(f"  mascara de negociabilidade: {int((~dia_util).sum())} dia(s) sem "
                   f"pregao efetivo preservados (nao se liquida a carteira em feriado)")
