@@ -132,6 +132,33 @@ def montar_retornos_completos(retornos_yf, precos_cotahist):
     completos = retornos_yf.join(retornos_cotahist[faltantes], how="outer")
     completos = completos.sort_index()
 
+    # CALENDARIO OFICIAL DA B3 -- causa raiz de tres bugs anteriores.
+    #
+    # O painel do yfinance traz 36 datas que NAO sao pregao na B3 (Carnaval,
+    # Corpus Christi, Finados, Consciencia Negra, 25/01...). Elas nao existem
+    # no COTAHIST, que e o arquivo oficial da bolsa.
+    #
+    # O dano nao esta no dia fantasma em si -- esta no dia SEGUINTE: 27 dessas
+    # linhas vem com preco NaN, e o `pct_change` do Bloco 1 propaga o NaN para
+    # o primeiro pregao REAL seguinte. Resultado medido: em 25 pregoes
+    # legitimos, so ~50 dos 214 tickers da carteira tinham retorno (mediana
+    # 158). O Bloco 5 lia isso como "110 acoes pararam de negociar" e ZERAVA a
+    # carteira, com rebuild completo no dia seguinte.
+    #
+    # Isso explica por que tres correcoes anteriores (clip com NaN, ffill do
+    # ADTV, guarda de feriado) quase nao mexeram no resultado: os tres
+    # disparavam nas MESMAS datas e eram redundantes. Enquanto o retorno do dia
+    # seguinte continuasse NaN, a carteira zerava de qualquer jeito.
+    #
+    # Filtramos aqui alem do Bloco 1 porque ESTE e o arquivo que os Blocos 3, 4
+    # e 5 consomem -- e o Bloco 1 depende de rede, entao pode nao ter rodado.
+    calendario = precos_cotahist.index
+    antes = len(completos)
+    completos = completos.loc[completos.index.isin(calendario)]
+    if antes != len(completos):
+        print(f"  calendario da B3: {antes - len(completos)} data(s) fantasma removida(s) "
+              f"({antes} -> {len(completos)} pregoes)")
+
     return completos, faltantes
 
 

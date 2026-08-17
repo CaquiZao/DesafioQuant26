@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 class PortfolioBuilder:
-    def __init__(self, aum=100_000_000, target_vol=0.12, max_weight_name=0.05, max_weight_sector=0.25, max_adtv_pct=0.10, vol_window=60, max_leverage=3.0, n_iteracoes_vol=3, janela_suavizacao_pesos=10):
+    def __init__(self, aum=100_000_000, target_vol=0.12, max_weight_name=0.05, max_weight_sector=0.25, max_adtv_pct=0.10, vol_window=60, max_leverage=3.0, n_iteracoes_vol=3, janela_suavizacao_pesos=63):
         self.aum = aum
         self.target_vol = target_vol
         self.max_weight_name = max_weight_name
@@ -17,8 +17,18 @@ class PortfolioBuilder:
         # Média móvel aplicada aos PESOS FINAIS (não ao sinal). Suavizar o
         # sinal no Bloco 4 não basta: o escalar de vol-targeting e as travas
         # mudam todo dia e reintroduzem giro. Suavizar o que é de fato
-        # negociado derrubou o giro de 13,4% para 3,9% ao dia e dobrou o
-        # Sharpe (0,22 -> 0,51) na medição de 03/08.
+        # negociado é o que controla o giro e, portanto, a capacidade.
+        #
+        # 63 pregões (16/08), era 10. A justificativa mudou de natureza junto
+        # com o horizonte do sinal: o Bloco 4 passou a acumular o choque em
+        # 12-1 meses, então a carteira-alvo é intrinsecamente lenta e não faz
+        # sentido negociá-la com uma janela de 2 semanas. A janela de pesos
+        # deve ser da ordem do horizonte do sinal, não um número calibrado.
+        #
+        # NOTA HISTORICA: o valor antigo (10) foi escolhido por maximizar o
+        # Sharpe numa varredura -- era a unica linha do repositorio que
+        # documentava escolha de parametro por resultado. A justificativa
+        # agora e estrutural.
         self.janela_suavizacao_pesos = janela_suavizacao_pesos
         
     def build_portfolio(self, df_zscore, df_returns, df_adtv, df_betas, df_sectors):
@@ -129,6 +139,55 @@ class PortfolioBuilder:
         negociavel = df_returns.reindex(
             index=df_weights.index, columns=df_weights.columns
         ).notna()
+
+        # GUARDA DE FERIADO (16/08). A base de retornos contem linhas de dias
+        # em que a bolsa NAO abriu -- 02/11 (Finados), 15/10, etc. -- com um ou
+        # dois tickers preenchidos por ruido de fonte. Sem esta guarda, a
+        # mascara lia isso como "130 acoes pararam de negociar de uma vez" e
+        # ZERAVA a carteira inteira, com rebuild completo no dia seguinte.
+        #
+        # Medido: 11 liquidacoes completas, giro de ate 1,77 num unico dia
+        # (duas pontas). A 5 bps era quase invisivel; com custo realista cada
+        # evento custa ~0,5%.
+        #
+        # O criterio nao e calibrado: num pregao real ~335 tickers tem retorno;
+        # nesses dias, UM. Qualquer corte entre os dois separa o feriado do
+        # evento de mercado. 10% da mediana e conservador com folga -- nao ha
+        # dia real de bolsa em que 90% do universo pare de negociar.
+        # Referencia MOVEL, nao mediana global: o universo cresce ao longo do
+        # tempo (46 nomes em 2017, 152 em 2022), entao uma mediana global
+        # subestima o limiar no fim da amostra e o superestima no comeco.
+        #
+        # O limiar de 10% da mediana global tinha uma ZONA CEGA de 24 dias: em
+        # pregoes reais contaminados por feriado fantasma do yfinance a
+        # cobertura caia para ~51 nomes, acima do corte de 15,8 -- e a guarda
+        # nao disparava. Com a causa raiz corrigida em `s1_precos.py` isso nao
+        # deveria mais acontecer; esta camada e a defesa em profundidade.
+        #
+        # 60% da mediana movel: medido, o MENOR valor de cobertura/mediana
+        # movel entre dias legitimos e 93,4%. O corte tem folga de 33 pontos
+        # percentuais -- nao existe risco de falso positivo.
+        # DUAS condicoes, e a segunda existe porque a primeira sozinha tem
+        # falso positivo: num universo pequeno, UMA acao deslistando derruba a
+        # cobertura tanto quanto um feriado. Foi o teste
+        # `test_acao_delistada_nao_carrega_posicao_fantasma` (2 tickers) que
+        # expos isso -- a guarda preservava o peso da acao morta.
+        #
+        # "Cobertura desabou" so distingue feriado de deslistagem quando a
+        # secao transversal e grande o bastante para a estatistica significar
+        # alguma coisa. Com 158 nomes, uma acao morrendo move 0,6%; com 2
+        # nomes, move 50%.
+        MIN_UNIVERSO_GUARDA = 20
+        por_dia = negociavel.sum(axis=1)
+        referencia = (por_dia.rolling(252, min_periods=20).median()
+                      .fillna(por_dia.median()))
+        dia_util = (por_dia >= (referencia * 0.60).clip(lower=1.0)) | \
+                   (referencia < MIN_UNIVERSO_GUARDA)
+        if (~dia_util).any():
+            print(f"  mascara de negociabilidade: {int((~dia_util).sum())} dia(s) sem "
+                  f"pregao efetivo preservados (nao se liquida a carteira em feriado)")
+        negociavel = negociavel.where(dia_util, other=True, axis=0)
+
         return df_weights.where(negociavel, 0.0)
 
     def _estimar_vol_portfolio(self, df_weights, df_returns):
@@ -172,9 +231,35 @@ class PortfolioBuilder:
 
     def _apply_institutional_locks(self, df_weights, df_adtv, df_sectors):
         # a. Trava de Liquidez (ADTV) - executada primeiro para podar ações ilíquidas logo de cara
+        #
+        # BUG CORRIGIDO (16/08): `clip` com limite NaN NAO CORTA -- ele devolve o
+        # valor original. Verificado em pandas 3.0.1:
+        #     pd.Series([10.0]).clip(lower=pd.Series([nan]), upper=pd.Series([nan])) -> 10.0
+        # Como o indice do ADTV nao cobre todos os dias/tickers da matriz de pesos
+        # (36 dias fora do indice, mais celulas com ADTV ausente), 353 posicoes
+        # escapavam silenciosamente da trava.
+        #
+        # ADTV ausente significa "nao sabemos se da para negociar", e a resposta
+        # conservadora para isso e limite ZERO, nao limite infinito.
+        # SEGUNDA CORRECAO (16/08): `fillna(0)` sozinho era GROSSEIRO DEMAIS.
+        # O ADTV vem do COTAHIST, que tem calendario proprio -- ha dias que
+        # existem na matriz de pesos e nao existem no arquivo de ADTV. Nesses
+        # dias o limite virava ZERO para TODOS os tickers e a carteira inteira
+        # era LIQUIDADA, com rebuild no dia seguinte.
+        #
+        # Medido: 21 liquidacoes completas apos o aquecimento, cada uma com giro
+        # de ate 1,30 (duas pontas). A 5 bps isso e invisivel; com custo realista
+        # cada round trip custa ~0,8%.
+        #
+        # A liquidez de uma acao nao evapora porque falta uma linha no arquivo.
+        # `ffill` carrega o ultimo ADTV conhecido pelo buraco de calendario; o
+        # `fillna(0)` que sobra continua valendo para ticker que nunca teve ADTV
+        # -- que e o caso em que "nao sabemos se da para negociar" deve mesmo
+        # significar limite zero.
         if df_adtv is not None and not df_adtv.empty:
             limit_w = (df_adtv * self.max_adtv_pct) / self.aum
             limit_w, df_weights_aligned = limit_w.align(df_weights, join='right')
+            limit_w = limit_w.ffill().fillna(0.0)
             df_weights = df_weights_aligned.clip(lower=-limit_w, upper=limit_w)
 
         # b. Trava de % Max por nome
@@ -202,15 +287,43 @@ class PortfolioBuilder:
         return df_weights
 
     def _apply_beta_hedge(self, df_weights, df_betas):
-        # Portfolio Beta = sum(weight_i * beta_i)
-        # O ativo IBOV_SYNTHETIC vai ter peso de -Portfolio Beta
-        if df_betas is not None and not df_betas.empty:
-            df_betas_aligned, df_weights_aligned = df_betas.align(df_weights, join='right')
-            port_beta = (df_weights_aligned * df_betas_aligned).sum(axis=1)
-            df_weights['IBOV_SYNTHETIC'] = -port_beta
-        else:
+        """
+        Beta da carteira = soma(peso_i * beta_i). O IBOV_SYNTHETIC recebe peso
+        -beta_carteira, zerando a exposicao ao mercado.
+
+        BUG CORRIGIDO (16/08): `.sum()` do pandas ignora NaN por padrao, entao
+        beta DESCONHECIDO virava contribuicao ZERO. Na pratica: a posicao
+        entrava no book e o hedge fingia que ela tinha beta nulo. Medido em
+        producao: 12.629 de 93.022 posicoes-dia (13,6%), equivalentes a 9,3% da
+        exposicao bruta, e um beta residual da estrategia de -0,031 (t = -4,57).
+
+        Nao se hedgeia o que nao se mede: a posicao sem beta valido e ZERADA,
+        em vez de entrar sem protecao. E a escolha conservadora -- deixar de
+        ganhar num nome e melhor que carregar exposicao de mercado nao medida
+        numa estrategia vendida como neutra.
+        """
+        if df_betas is None or df_betas.empty:
             df_weights['IBOV_SYNTHETIC'] = 0.0
-            
+            return df_weights
+
+        df_betas_aligned, df_weights_aligned = df_betas.align(df_weights, join='right')
+
+        # Elegibilidade: so entra quem tem beta medido.
+        sem_beta = df_betas_aligned.isna() & (df_weights_aligned.abs() > 0)
+        n_zeradas = int(sem_beta.sum().sum())
+        if n_zeradas:
+            ativas = int((df_weights_aligned.abs() > 0).sum().sum())
+            print(f"  hedge de beta: {n_zeradas} posicoes-dia sem beta valido "
+                  f"({n_zeradas / max(ativas, 1):.1%} das ativas) foram zeradas")
+        df_weights = df_weights_aligned.where(~sem_beta, 0.0)
+
+        port_beta = (df_weights * df_betas_aligned).sum(axis=1)
+
+        # Safeguard: depois da mascara, nenhuma posicao ativa pode ter beta NaN.
+        residual = (df_betas_aligned.isna() & (df_weights.abs() > 0)).sum().sum()
+        assert residual == 0, f"{residual} posicoes ativas ainda sem beta apos a mascara"
+
+        df_weights['IBOV_SYNTHETIC'] = -port_beta
         return df_weights
 
 if __name__ == "__main__":

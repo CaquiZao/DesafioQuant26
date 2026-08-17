@@ -186,16 +186,29 @@ def main():
     print(" BLOCO 11 -- GRAFO POINT-IN-TIME (correcao da pendencia P2)")
     print("=" * 78)
 
-    contexto, grafo_atual = s6.montar_contexto()
+    # BUG CORRIGIDO (16/08): `s6.montar_contexto()` -> `carregar_insumos` ->
+    # `s4.carregar_dados()` JA concatena base + historico. A versao anterior
+    # concatenava o historico DE NOVO, produzindo 86 linhas com 28 duplicadas.
+    # Como `montar_sinal_propagado` acumula com `+=`, a forca dos 28 elos
+    # historicos DOBRAVA -- e os rotulos impressos ("atual: 30 elos") estavam
+    # errados. O grafo completo ja vem pronto do contexto.
+    contexto, grafo_completo = s6.montar_contexto()
 
     grafo_historico = pd.read_csv(CAMINHO_GRAFO_HISTORICO)
-    grafo_completo = pd.concat([grafo_atual, grafo_historico], ignore_index=True)
+    chaves_hist = set(zip(grafo_historico["empresa_A"], grafo_historico["empresa_B"]))
+    eh_hist = [(a, b) in chaves_hist
+               for a, b in zip(grafo_completo["empresa_A"], grafo_completo["empresa_B"])]
+    grafo_atual = grafo_completo.loc[[not h for h in eh_hist]].reset_index(drop=True)
 
     empresas_atual = set(grafo_atual["empresa_A"]) | set(grafo_atual["empresa_B"])
     empresas_hist = set(grafo_historico["empresa_A"]) | set(grafo_historico["empresa_B"])
     novas = empresas_hist - empresas_atual
 
-    print(f"\nGrafo atual     : {len(grafo_atual)} elos, {len(empresas_atual)} empresas")
+    assert len(grafo_completo) == len(grafo_atual) + len(grafo_historico), (
+        f"grafo completo ({len(grafo_completo)}) != base ({len(grafo_atual)}) + "
+        f"historico ({len(grafo_historico)}) -- ha elo duplicado")
+
+    print(f"\nGrafo base      : {len(grafo_atual)} elos, {len(empresas_atual)} empresas")
     print(f"Grafo historico : {len(grafo_historico)} elos, {len(novas)} empresas novas")
     print(f"Grafo completo  : {len(grafo_completo)} elos, "
           f"{len(empresas_atual | empresas_hist)} empresas")

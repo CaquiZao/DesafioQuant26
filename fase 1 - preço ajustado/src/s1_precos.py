@@ -334,6 +334,58 @@ def montar_tabela_precos(precos_por_ticker):
     return tabela_precos
 
 
+def filtrar_calendario_b3(tabela_precos, caminho_cotahist=None):
+    """
+    Remove do painel do yfinance as datas em que a B3 NAO abriu.
+
+    POR QUE ISTO EXISTE -- e a CAUSA RAIZ de tres bugs anteriores
+    ------------------------------------------------------------
+    O yfinance devolve linhas para 36 datas que NAO sao pregao na B3:
+    Carnaval, Corpus Christi, Finados, Consciencia Negra, 25/01 (aniversario
+    de Sao Paulo), 29/12/2017... Verificado: nenhuma delas existe no COTAHIST,
+    que e o arquivo oficial da bolsa.
+
+    Dessas 36 linhas fantasma:
+      - 27 vem com preco NaN. O `pct_change()` propaga esse NaN para o
+        PRIMEIRO PREGAO REAL seguinte -- o retorno de um dia legitimo vira
+        ausente.
+      - 9 vem com preco REPETIDO (stale) e geram retorno 0,0 falso para ~124
+        tickers.
+
+    A cadeia de dano medida: em 25 pregoes REAIS, apenas ~50 dos 214 tickers
+    da carteira tinham retorno (contra mediana de 158). O Bloco 5 lia isso
+    como "110 acoes pararam de negociar" e ZERAVA a carteira, com rebuild
+    completo no dia seguinte -- 21 liquidacoes espurias, e o giro de 2018
+    subindo para 13,5%/dia contra ~3% nos outros anos.
+
+    Foi isso que fez tres correcoes anteriores (clip com NaN, ffill do ADTV,
+    guarda de feriado) praticamente nao mexerem no resultado: os tres
+    mecanismos disparavam nas MESMAS datas e eram redundantes entre si.
+    Enquanto o retorno do dia seguinte continuasse NaN, a carteira zerava de
+    qualquer jeito.
+
+    O calendario oficial e o do COTAHIST. Se o arquivo nao existir, nao
+    filtramos -- mas avisamos, porque rodar sem ele reintroduz o bug.
+    """
+    if caminho_cotahist is None:
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        caminho_cotahist = os.path.join(base, "data", "precos", "precos_cotahist.parquet")
+
+    if not os.path.exists(caminho_cotahist):
+        print("  AVISO: precos_cotahist.parquet nao encontrado -- calendario da B3 NAO "
+              "aplicado. Rode o Bloco 2 antes; sem ele, feriados do yfinance viram "
+              "retorno NaN em pregao real.")
+        return tabela_precos
+
+    calendario = pd.read_parquet(caminho_cotahist, columns=[]).index
+    antes = len(tabela_precos)
+    tabela = tabela_precos.loc[tabela_precos.index.isin(calendario)]
+    removidas = antes - len(tabela)
+    print(f"  calendario da B3: {removidas} data(s) fantasma removida(s) "
+          f"({antes} -> {len(tabela)} pregoes)")
+    return tabela
+
+
 def montar_tabela_retornos(tabela_precos):
     """
     Calcula o retorno diario de cada ticker a partir da tabela de precos:
@@ -341,7 +393,12 @@ def montar_tabela_retornos(tabela_precos):
 
     A primeira linha fica vazia (NaN) porque nao existe "dia anterior"
     para o primeiro dia da serie. Isso e esperado.
+
+    O filtro de calendario roda ANTES do pct_change -- e obrigatorio que seja
+    antes, porque o dano do feriado fantasma e justamente contaminar o retorno
+    do pregao seguinte. Ver `filtrar_calendario_b3`.
     """
+    tabela_precos = filtrar_calendario_b3(tabela_precos)
     # pct_change() ja faz exatamente essa conta (preco_hoje / preco_ontem - 1)
     # para cada coluna (cada ticker) separadamente.
     tabela_retornos = tabela_precos.pct_change()

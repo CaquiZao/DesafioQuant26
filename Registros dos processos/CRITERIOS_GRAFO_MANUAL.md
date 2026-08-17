@@ -1,5 +1,43 @@
 # Critérios para o Grafo Manual (Bloco 4)
 
+> ## ⚠️ AVISO DE STATUS (16/08/2026) — leia antes do resto
+>
+> **Este documento é o PRÉ-REGISTRO da hipótese econômica original. Uma parte dela foi
+> REFUTADA pelos dados, e o texto abaixo foi preservado exatamente como escrito.**
+>
+> A regra da §2 especifica `direcao = -1` para `concorrente` e `substituto` ("a desgraça de um é
+> a sorte do outro"). O `grafo_manual_base.csv` em produção tem **`+1` em todas as linhas**.
+> **A divergência é intencional e foi decidida sob protocolo** — o documento é que não havia sido
+> atualizado.
+>
+> **O que os dados disseram.** Testado elo a elo contra 10 anos: `concorrente` tem correlação
+> T+1 **positiva**, não negativa. Concorrentes **co-movem** — eles dividem a mesma economia
+> (VALE3 e CSNA3 dependem do mesmo minério de ferro), e essa exposição compartilhada domina
+> qualquer efeito de soma-zero. A premissa era economicamente ingênua.
+>
+> **Como a mudança foi decidida — e isto é o que a torna defensável.** A inversão não foi feita
+> olhando o resultado do backtest. Ela passou pelo protocolo de
+> `fase 6 - validacao/src/s6_validacao_oos.py`: a direção de cada *categoria* foi decidida
+> usando **só 2016–2020**, congelada num CSV, e medida em 2021–2025 uma única vez. Um analista
+> parado em 31/12/2020, sem ver nada de 2021 em diante, escolheria `+1` do mesmo jeito.
+> O controle (`pre_inversao`, mantendo `-1`) dá alfa **negativo** fora da amostra.
+>
+> **A tese substituta, que é a que vale hoje:** não é propagação de soma-zero entre rivais, é
+> **difusão lenta de informação intra-indústria** — o nome líquido precifica a notícia do setor
+> primeiro, o menos líquido segue. Tem literatura (Lo & MacKinlay 1990; Hou 2007) e uma
+> confirmação empírica própria: o teste bidirecional mostrou que o sentido reverso é mais fraco
+> nas **6 categorias, sem exceção**.
+>
+> **Status atual do grafo manual:** substituído em produção pelo **grafo mecânico** do
+> `s4d_grafo_regra.py`, que o reproduz em 95%. Os 58 elos continuam no repositório como
+> comparação e como base do placebo de reembaralhamento.
+>
+> **Por que o texto original não foi apagado:** ele é a evidência de que a hipótese foi declarada
+> *antes* de ser testada. Reescrevê-lo para bater com o resultado destruiria a única coisa que
+> torna a refutação interessante.
+
+---
+
 Para garantir que nosso teste da SINAPSE seja estatisticamente válido, não podemos preencher os elos com base em "achismos". Cada linha do `grafo_manual_base.csv` obedece aos critérios fixos e lógicos descritos abaixo, validados com fatos do mercado brasileiro.
 
 ## A Premissa da Assimetria
@@ -21,6 +59,16 @@ Representa o vetor matemático do choque.
 
 *   `1` **(Correlação Positiva):** Destinos alinhados. Se A sangra, B sangra junto. (Aplicável a: `fornecedor`, `cliente`, `imobiliario_logistica`, `holding_subsidiaria`, `credor_devedor`).
 *   `-1` **(Correlação Negativa / Soma-Zero):** A desgraça de um é a sorte do outro. O capital e os clientes migram de A para B. (Aplicável a: `concorrente`, `substituto`).
+
+> **📌 REFUTADO (16/08/2026).** Esta regra foi testada e não se sustenta. Todas as linhas do CSV
+> em produção usam `+1`. Ver o aviso de status no topo do arquivo para o protocolo que decidiu a
+> inversão e para a tese substituta. As descrições elo a elo abaixo (que dizem "soma-zero",
+> "captura market share", "ganham fluxo se a estatal sofrer") preservam o raciocínio original e
+> **não** descrevem o que o modelo faz hoje.
+>
+> Regra atual, decidida por categoria com dados até 2020 e congelada: parte-se do prior econômico
+> e só se abandona onde o in-sample tem força estatística (`|t| ≥ 2`). Aplicando: apenas
+> `concorrente` inverte contra o prior.
 
 ## 3. Força do Elo (`forca`)
 Multiplicador (0.0 a 1.0) que amortece ou amplifica o sinal. Para o grafo manual, usamos elos muito óbvios (Força alta).

@@ -33,6 +33,9 @@ import json
 import os
 import urllib.request
 
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import matplotlib
 # "Agg" e um modo do matplotlib que so desenha o grafico em arquivo, sem
 # tentar abrir uma janela na tela. Precisa vir antes de importar pyplot.
@@ -77,6 +80,11 @@ PASTA_SAIDA = os.path.join(DATA_DIR, "backtest")
 # esse giro de "duas pontas" -- estimativa de corretagem + emolumentos +
 # slippage moderado para acoes liquidas brasileiras.
 CUSTO = 0.0005
+
+# AUM usado no modelo de custo realista (Bloco 3b). O impacto de mercado e o
+# aluguel dependem do TAMANHO da posicao, entao precisam do AUM -- diferente
+# do custo linear, que e invariante a escala.
+AUM_BACKTEST = 100_000_000
 
 # Taxa livre de risco anual, usada no calculo do Sharpe (retorno em
 # EXCESSO sobre essa taxa). Por enquanto 0.0 -- ajustar depois pra uma
@@ -185,6 +193,36 @@ def carregar_retorno_cdi(caminho_cdi, data_inicio, data_fim):
 # ------------------------------------------------------------------
 # 4) MOTOR: EXECUCAO (multiplicacao matricial diaria direta)
 # ------------------------------------------------------------------
+
+def rodar_motor_custo_realista(df_weights, df_returns, df_adtv, aum, eta=None):
+    """
+    Igual ao `rodar_motor`, mas com o modelo de custo em CAMADAS do Bloco 3b:
+    spread+taxas por faixa de liquidez, impacto de mercado pela lei da raiz
+    quadrada, e aluguel (BTC) sobre a ponta vendida.
+
+    O custo linear de 5 bps do `rodar_motor` e um numero de large cap liquida;
+    73% do giro deste book esta abaixo de R$150MM de ADTV. Medido, o custo
+    realista sai ~4x maior -- e a diferenca entre um backtest apresentavel e
+    um que a banca desmonta em duas perguntas.
+
+    Devolve (retorno_liquido, pnl_bruto, giro_diario, componentes_de_custo).
+    """
+    import s3b_custos
+
+    datas = df_weights.index.intersection(df_returns.index)
+    W = df_weights.loc[datas].sort_index()
+    R = df_returns.loc[datas].sort_index()
+
+    giro_diario = W.fillna(0).diff().abs().sum(axis=1)
+    pnl_bruto = (W.fillna(0) * R.fillna(0)).sum(axis=1)
+
+    kwargs = {} if eta is None else {"eta": eta}
+    custo_total, componentes = s3b_custos.custo_por_dia(
+        W, df_adtv, R, aum, **kwargs
+    )
+    retorno_liquido = pnl_bruto - custo_total.reindex(pnl_bruto.index).fillna(0.0)
+    return retorno_liquido, pnl_bruto, giro_diario, componentes
+
 
 def rodar_motor(df_weights, df_returns, custo_por_giro):
     """
@@ -445,7 +483,46 @@ def main():
     # ------------------------------------------------------------------
     # Diagnostico de execucao -- separa "o sinal e ruim" de "o custo comeu"
     # ------------------------------------------------------------------
-    print("\n===== DIAGNOSTICO DE EXECUCAO =====")
+    # ------------------------------------------------------------------
+    # Custo REALISTA (Bloco 3b) -- a premissa de 5 bps flat e de large cap
+    # ------------------------------------------------------------------
+    print("\n===== CUSTO REALISTA (spread por faixa + impacto + aluguel) =====")
+    try:
+        import s3b_custos
+        caminho_adtv = os.path.join(DATA_DIR, "universo", "adtv_diario.parquet")
+        df_adtv = pd.read_parquet(caminho_adtv)
+        _, comp = s3b_custos.custo_por_dia(
+            pesos_sinapse, df_adtv, retornos_diarios, AUM_BACKTEST
+        )
+        ano, giro_med, bps_giro = s3b_custos.resumo_custo(comp, giro_diario)
+        breakeven, _ = s3b_custos.tabela_breakeven(pnl_bruto, giro_diario)
+
+        print(f"{'componente':<20}{'% ao ano':>12}")
+        print("-" * 32)
+        for nome in ["spread_taxas", "impacto", "aluguel", "hedge", "total"]:
+            print(f"{nome:<20}{ano[nome]:>11.2%}")
+        print(f"\nCusto implicito por unidade de giro : {bps_giro:>6.1f} bps")
+        print(f"Premissa antiga (flat)              : {CUSTO*1e4:>6.1f} bps")
+        print(f"ALFA por unidade de giro (breakeven) : {breakeven:>6.1f} bps")
+        if breakeven > bps_giro:
+            print(f"  -> o sinal paga o proprio giro com folga de "
+                  f"{breakeven/bps_giro:.1f}x")
+        else:
+            print("  -> ATENCAO: o sinal NAO paga o proprio giro")
+
+        print("\nSensibilidade ao parametro de impacto (eta):")
+        print(f"  {'eta':>5}{'custo/ano':>12}{'liquido/ano':>14}")
+        for eta in (0.0, 0.2, 0.4, 0.7, 1.0):
+            _, c_eta = s3b_custos.custo_por_dia(
+                pesos_sinapse, df_adtv, retornos_diarios, AUM_BACKTEST, eta=eta
+            )
+            liq = (pnl_bruto - c_eta["total"].reindex(pnl_bruto.index).fillna(0)).mean() * DIAS_UTEIS_ANO
+            print(f"  {eta:>5.1f}{c_eta['total'].mean()*DIAS_UTEIS_ANO:>11.2%}"
+                  f"{liq:>13.2%}")
+    except Exception as erro:
+        print(f"  (custo realista indisponivel: {erro})")
+
+    print("\n===== DIAGNOSTICO DE EXECUCAO (custo flat, referencia) =====")
     giro_medio = giro_diario.mean()
     custo_ano = giro_medio * CUSTO * DIAS_UTEIS_ANO
     bruto_ano = pnl_bruto.mean() * DIAS_UTEIS_ANO
