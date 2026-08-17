@@ -84,12 +84,30 @@ def fig169(w=12.8, h=7.2):
     return plt.subplots(figsize=(w, h), dpi=110)
 
 
+# MODO DECK -------------------------------------------------------------
+# O relatorio e o deck sao lidos de formas diferentes. No RelatorioRAW.md
+# cada figura tem de se explicar sozinha, porque nao ha texto ao lado
+# garantido. No deck de 5 paginas o slide JA da o contexto, e repetir o
+# mesmo paragrafo dentro da imagem so gasta palavra (o edital pede ~750).
+#
+# `sub()` escolhe entre as duas versoes. A regra que seguimos: so encurta
+# quando a informacao aparece em outro lugar do deck. Onde o subtitulo e a
+# UNICA fonte de algo -- "escalas independentes" no drawdown, "2017 e
+# parcial" no anual -- o texto curto continua dizendo aquilo.
+DECK = False
+
+
+def sub(longo, curto):
+    return curto if DECK else longo
+
+
 def salvar(fig, nome):
-    os.makedirs(SAIDA, exist_ok=True)
-    caminho = os.path.join(SAIDA, f"{nome}.png")
+    destino = os.path.join(SAIDA, "deck") if DECK else SAIDA
+    os.makedirs(destino, exist_ok=True)
+    caminho = os.path.join(destino, f"{nome}.png")
     fig.savefig(caminho, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"  [png] {nome}")
+    print(f"  [png] {'deck/' if DECK else ''}{nome}")
     return caminho
 
 
@@ -135,8 +153,12 @@ def carregar():
     POR QUE NAO BASTA LER `curvas_diarias.parquet`: aquele arquivo traz apenas
     o custo linear de 5 bps. Esse numero e de LARGE CAP LIQUIDA -- 79% do giro
     deste book esta abaixo de R$150MM de ADTV. Sob o custo realista (spread por
-    faixa + impacto + aluguel BTC), o excesso sobre o CDI vai de +88,0% para
-    -2,6%: a estrategia NAO bate o CDI.
+    faixa + impacto + aluguel BTC) o excesso sobre o CDI cai para menos da
+    metade, e essa diferenca e o resultado mais importante do material.
+
+    Nenhum numero fica escrito aqui de proposito: as duas leituras sao
+    recalculadas a cada execucao e o texto dos graficos e tabelas e formatado a
+    partir delas. Numero em docstring vira mentira na rodada seguinte.
     """
     import sys
     sys.path.insert(0, os.path.join(BASE_DIR, "fase 3 - backtest", "src"))
@@ -173,7 +195,10 @@ def carregar():
     # `pesos` e `giro` era a origem do "33,6 bps" -- o correto e 32,2).
     d["r_flat"] = d["bruto"] - d["custo_flat"]
     d["r_real"] = d["bruto"] - d["custo_real"]
-    d["r_estrategia"] = d["r_flat"]              # leitura de referencia
+    # NAO recriar um alias generico tipo `r_estrategia`. Existia um, apontando
+    # silenciosamente para os 5 bps, e cinco graficos o usaram achando que era "o
+    # retorno da estrategia" -- enquanto as tabelas mostravam o custo realista.
+    # Cada grafico agora nomeia a premissa que esta usando: `r_flat` ou `r_real`.
 
     d["r_ibov"] = ibov.reindex(datas).fillna(0.0)
     d["r_cdi"] = d["cdi"].reindex(datas).fillna(0.0)
@@ -186,7 +211,20 @@ def carregar():
     ativo = (W.abs().sum(axis=1) > 1e-9)
     d["primeiro_ativo"] = ativo.idxmax()
     d["mask_ativo"] = ativo
+
+    # JANELA UNICA DO MATERIAL. Todo grafico e toda tabela usam ESTE indice.
+    # A versao anterior deixava cada funcao escolher: as tabelas filtravam pelo
+    # periodo ativo, os graficos plotavam o painel inteiro desde 2016. O mesmo
+    # Ibovespa aparecia +161,6% na tabela e +282% no grafico -- material que se
+    # contradiz sozinho e a primeira coisa que uma banca encontra.
+    d["idx_ativo"] = ativo[ativo].index
+    d["pesos_ativo"] = W.loc[d["idx_ativo"]]
     return d
+
+
+def ativo(d, s):
+    """Recorta qualquer serie/tabela para a janela ativa do material."""
+    return s.loc[s.index.intersection(d["idx_ativo"])]
 
 
 # ==================================================================
@@ -222,25 +260,63 @@ def metricas(r, rf=None):
 # ==================================================================
 
 def g_curva(d):
-    fig, ax = fig169()
-    series = [
-        ("Fundo (CDI + Sinapse)", (1 + d["r_fundo"]).cumprod() - 1, C["fundo"], 2.4),
-        ("Ibovespa", (1 + d["r_ibov"]).cumprod() - 1, C["ibov"], 2.0),
-        ("CDI", (1 + d["r_cdi"]).cumprod() - 1, C["cdi"], 2.0),
-        ("Sinapse (alfa long-short)", (1 + d["r_estrategia"]).cumprod() - 1, C["sinapse"], 2.4),
-    ]
-    for nome, s, cor, lw in series:
-        ax.plot(s.index, s.values, color=cor, linewidth=lw, label=nome, solid_capstyle="round")
-        rotulo_direto(ax, s.index[-1], s.iloc[-1], f" {nome.split(' (')[0]} {s.iloc[-1]:+.0%}", cor)
+    """
+    Dois paineis, uma premissa de custo em cada.
 
-    ax.axhline(0, color=C["eixo"], linewidth=1)
-    ax.yaxis.set_major_formatter(PCT)
-    titulo(ax, "Retorno acumulado — 2016 a 2025",
-           "A Sinapse é market-neutral: o produto entregue ao cotista é CDI + alfa. "
-           "O Ibovespa entra como referência de descorrelação, não como meta.")
-    ax.legend(loc="upper left", ncol=2, fontsize=10)
-    ax.margins(x=0.14)
-    return salvar(fig, "01_retorno_acumulado")
+    BUG CORRIGIDO (16/08): a versao anterior plotava o periodo COMPLETO
+    enquanto as tabelas usavam o periodo ATIVO -- o Ibovespa aparecia +282% no
+    grafico e +161,6% na tabela. Toda serie aqui usa a MESMA janela das
+    tabelas, senao o material se contradiz.
+    """
+    a = d["mask_ativo"].values
+    def cum(s):
+        s = s[a]
+        return (1 + s).cumprod() - 1
+
+    paineis = [
+        ("01a_retorno_acumulado_5bps",
+         "Retorno acumulado: premissa usual de mercado (5 bps por unidade de giro)",
+         sub("Custo linear de 5 bps sobre o giro: a convenção de backtest da indústria, "
+             "calibrada para large cap líquida.\nA Sinapse é market-neutral: o produto "
+             "entregue ao cotista é CDI + alfa. O Ibovespa é referência de descorrelação, não meta.",
+             None),
+         [("Fundo (CDI + Sinapse)", cum(d["r_fundo"]), C["fundo"], 2.8),
+          ("Ibovespa", cum(d["r_ibov"]), C["ibov"], 2.1),
+          ("CDI", cum(d["r_cdi"]), C["cdi"], 2.1),
+          ("Sinapse (alfa)", cum(d["r_flat"]), C["sinapse"], 2.8)]),
+        ("01b_retorno_acumulado_realista",
+         "Retorno acumulado: custo realista (o número que defendemos)",
+         sub("Meio-spread por faixa de ADTV + impacto de mercado + aluguel (BTC) da ponta vendida. "
+             "79% do giro deste book\nestá abaixo de R$ 150 MM de ADTV: onde os 5 bps do painel "
+             "anterior deixam de valer. Mesma carteira, mesmo sinal, mesmo período.",
+             None),
+         [("Fundo (CDI + Sinapse)", cum(d["r_fundo_real"]), C["fundo"], 2.8),
+          ("Ibovespa", cum(d["r_ibov"]), C["ibov"], 2.1),
+          ("CDI", cum(d["r_cdi"]), C["cdi"], 2.1),
+          ("Sinapse (alfa)", cum(d["r_real"]), C["sinapse"], 2.8)]),
+    ]
+
+    # Escala Y COMPARTILHADA entre as duas imagens. Sao dois arquivos separados,
+    # mas o leitor vai compara-los lado a lado -- eixos diferentes fariam a queda
+    # sob custo realista parecer menor do que e.
+    topo = max(s.max() for _, _, _, ss in paineis for _, s, _, _ in ss)
+
+    caminhos = []
+    for nome_arq, tit, subt, series in paineis:      # `subt`: `sub` e a funcao do modo deck
+        fig, ax = fig169(12.8, 6.6)
+        for nome, s, cor, lw in series:
+            ax.plot(s.index, s.values, color=cor, linewidth=lw, label=nome,
+                    solid_capstyle="round")
+            rotulo_direto(ax, s.index[-1], s.iloc[-1],
+                          f" {nome.split(' (')[0]} {s.iloc[-1]:+.0%}", cor)
+        ax.axhline(0, color=C["eixo"], linewidth=1)
+        ax.yaxis.set_major_formatter(PCT)
+        ax.set_ylim(-0.12, topo * 1.10)
+        ax.margins(x=0.16)
+        ax.legend(loc="upper left", fontsize=10.5)
+        titulo(ax, tit, subt)
+        caminhos.append(salvar(fig, nome_arq))
+    return caminhos[-1]
 
 
 # ==================================================================
@@ -284,11 +360,12 @@ def g_drawdown(d):
                 fontweight="700", color=cor)
 
     razao = minimos["Ibovespa"] / minimos["Sinapse"]
-    axes[0].set_title("Drawdown — quanto se perde do topo anterior",
+    axes[0].set_title("Drawdown: quanto se perde do topo anterior",
                       fontsize=15, fontweight="600", loc="left", pad=46)
-    axes[0].text(0, 1.02, f"Escalas independentes, para que a FORMA de cada série seja legível. "
-                          f"O pior momento do Ibovespa é {razao:.1f}× o da Sinapse.\n"
-                          "O CDI não aparece porque, por construção, nunca tem drawdown.",
+    axes[0].text(0, 1.02, sub(f"Escalas independentes, para que a FORMA de cada série seja legível. "
+                              f"O pior momento do Ibovespa é {razao:.1f}× o da Sinapse.\n"
+                              "O CDI não aparece porque, por construção, nunca tem drawdown.",
+                              "Escalas independentes: compare a FORMA, não a altura."),
                  transform=axes[0].transAxes, fontsize=10, color=C["tinta2"],
                  va="bottom", linespacing=1.45)
     return salvar(fig, "02_drawdown")
@@ -303,9 +380,12 @@ def g_anual(d):
     a = d["mask_ativo"]
     anos = [y for y in sorted(set(d["r_real"].index.year))
             if a[a.index.year == y].sum() > 20]
-    fontes = [("Sinapse", d["r_real"], C["sinapse"]),
-              ("Ibovespa", d["r_ibov"], C["ibov"]),
-              ("CDI", d["r_cdi"], C["cdi"])]
+    # Janela ativa nas TRES series. Sem isso, 2017 comparava 7,5 meses de
+    # Sinapse contra 12 meses de CDI e de Ibovespa -- e a barra do CDI de 2017
+    # no grafico (+9,8%) nao batia com a da tabela (+5,2%).
+    fontes = [("Sinapse", ativo(d, d["r_real"]), C["sinapse"]),
+              ("Ibovespa", ativo(d, d["r_ibov"]), C["ibov"]),
+              ("CDI", ativo(d, d["r_cdi"]), C["cdi"])]
     dados = {n: [(1 + r[r.index.year == y]).prod() - 1 for y in anos] for n, r, _ in fontes}
 
     fig, ax = fig169(13.4, 6.8)
@@ -323,15 +403,21 @@ def g_anual(d):
                         fontweight="700" if nome == "Sinapse" else "500",
                         color=cor if nome == "Sinapse" else C["neutro"], zorder=4)
 
-    # faixa de destaque nos anos que carregam o resultado
-    for y in (2019, 2020, 2021):
-        if y in anos:
-            j = anos.index(y)
-            ax.axvspan(j - 0.5, j + 0.5, color=C["sinapse"], alpha=0.05, zorder=0)
-    if 2019 in anos:
-        ax.annotate("2019–2021 carregam o resultado",
-                    xy=(anos.index(2020), max(dados["Sinapse"]) * 1.14),
-                    ha="center", fontsize=10, color=C["sinapse"], fontweight="700")
+    # Faixa de destaque nos anos que DE FATO carregam o resultado -- medido, nao
+    # escolhido. A versao anterior marcava 2019-2021 fixo, mas 2019 rendeu so
+    # +2,9%: os dois melhores anos sozinhos ja somam mais que o total do periodo.
+    ordem = sorted(range(len(anos)), key=lambda j: dados["Sinapse"][j], reverse=True)
+    top = sorted(ordem[:2])
+    soma_top = sum(dados["Sinapse"][j] for j in top)
+    total = np.prod([1 + v for v in dados["Sinapse"]]) - 1
+    for j in top:
+        ax.axvspan(j - 0.5, j + 0.5, color=C["sinapse"], alpha=0.06, zorder=0)
+    rotulo = ("–".join(str(anos[j]) for j in top) if top[1] - top[0] == 1
+              else " e ".join(str(anos[j]) for j in top))
+    ax.annotate(f"{rotulo} sozinhos somam {soma_top:+.0%}, mais que os {total:+.0%} "
+                "de todo o período",
+                xy=((top[0] + top[1]) / 2, max(dados["Sinapse"]) * 1.30),
+                ha="center", fontsize=10, color=C["sinapse"], fontweight="700")
 
     ax.set_xticks(x); ax.set_xticklabels(anos, fontsize=11.5)
     ax.axhline(0, color=C["tinta"], linewidth=1.4, zorder=2)
@@ -339,9 +425,17 @@ def g_anual(d):
     ax.set_ylim(min(min(v) for v in dados.values()) * 1.35,
                 max(max(v) for v in dados.values()) * 1.30)
     ax.set_axisbelow(True)
-    titulo(ax, "Retorno por ano — alfa da Sinapse com custo realista",
-           "O melhor ano da Sinapse (2020) foi o pior do Ibovespa; o pior dela (2025) foi um dos melhores dele.\n"
-           "Isso é descorrelação. Mas 5 dos 9 anos são negativos com custo real.")
+    # Contagem MEDIDA. A versao anterior afirmava "5 dos 9 anos" -- sobra de
+    # antes da correcao de calendario, e o proprio relatorio ja dizia 3.
+    neg = sum(1 for v in dados["Sinapse"] if v < 0)
+    pior = anos[int(np.argmin(dados["Sinapse"]))]
+    melhor = anos[int(np.argmax(dados["Sinapse"]))]
+    titulo(ax, "Retorno por ano: alfa da Sinapse com custo realista",
+           sub(f"O melhor ano da Sinapse ({melhor}) foi um dos piores do Ibovespa; o pior dela ({pior}) "
+               "foi um dos melhores dele.\n"
+               f"Isso é descorrelação. Mas {neg} dos {len(anos)} anos são negativos com custo real, "
+               f"e {anos[0]} é parcial (a estratégia só tem posição a partir de {d['primeiro_ativo']:%d/%m}).",
+               f"{anos[0]} é parcial: há posição só a partir de {d['primeiro_ativo']:%d/%m}."))
     ax.legend(loc="upper left", ncol=3, fontsize=10.5)
     return salvar(fig, "03_performance_anual")
 
@@ -351,10 +445,10 @@ def g_anual(d):
 # ==================================================================
 
 def g_giro(d):
-    w = d["pesos"]
+    w = ativo(d, d["pesos"])          # janela unica: media de giro tem que bater com a tabela
     acoes = [c for c in w.columns if c != "IBOV_SYNTHETIC"]
     n_pos = (w[acoes].abs() > 1e-6).sum(axis=1)
-    giro = w.fillna(0).diff().abs().sum(axis=1)
+    giro = ativo(d, d["giro"])
 
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(12.8, 7.2), dpi=110, sharex=True,
                                  gridspec_kw={"hspace": 0.28})
@@ -363,14 +457,18 @@ def g_giro(d):
     a1.plot(m.index, m.values, color=C["sinapse"], linewidth=2)
     a1.set_ylabel("ações na carteira")
     titulo(a1, "Número de ações na carteira, por mês",
-           "A expansão do universo em 08/2026 levou a carteira de ~35 para ~140 nomes.")
+           f"Mediana de {n_pos.median():.0f} nomes por pregão (média {n_pos.mean():.0f}). "
+           "A carteira cresce com o universo elegível: mais ações passam no filtro de liquidez\n"
+           "ao longo do período. Atenção: 134 posições NÃO são 134 apostas — a breadth "
+           "efetiva medida é 16,1 (ver inferência).")
 
     g = giro.resample("ME").mean()
     a2.fill_between(g.index, g.values, color=C["ibov"], alpha=0.16)
     a2.plot(g.index, g.values, color=C["ibov"], linewidth=2)
     a2.axhline(giro.mean(), color=C["neutro"], linestyle="--", linewidth=1.2)
-    a2.annotate(f"média {giro.mean():.1%}/dia", (g.index[3], giro.mean()),
-                xytext=(0, 6), textcoords="offset points", color=C["tinta2"], fontsize=10)
+    a2.annotate(f"média {giro.mean():.2%}/dia", (g.index[3], giro.mean()),
+                xytext=(0, 8), textcoords="offset points", color=C["tinta2"], fontsize=10,
+                fontweight="600")
     a2.yaxis.set_major_formatter(PCT1)
     a2.set_ylabel("giro diário")
     titulo(a2, "Giro diário (soma das mudanças absolutas de peso)")
@@ -438,7 +536,7 @@ def g_horizonte(d):
 # ==================================================================
 
 def g_exposicao(d):
-    w = d["pesos"]
+    w = ativo(d, d["pesos"])
     acoes = [c for c in w.columns if c != "IBOV_SYNTHETIC"]
     W = w[acoes].fillna(0)
     lg = W.clip(lower=0).sum(axis=1).resample("ME").mean()
@@ -446,16 +544,30 @@ def g_exposicao(d):
     net = (lg + sh)
     hedge = w["IBOV_SYNTHETIC"].fillna(0).resample("ME").mean()
 
-    fig, ax = fig169(12.8, 6.4)
+    # A linha que realmente importa -- e que faltava. A perna de acoes sozinha
+    # NAO e dollar-neutral: ela oscila dezenas de pontos. E o hedge de indice
+    # que traz o book de volta ao zero. Afirmar "dollar-neutral por construcao"
+    # ao lado de uma linha que vai de +40% a -45% e uma contradicao visivel.
+    total = net + hedge
+
+    fig, ax = fig169(12.8, 6.6)
     ax.fill_between(lg.index, lg.values, 0, color=C["sinapse"], alpha=0.30, label="comprado (long)")
     ax.fill_between(sh.index, sh.values, 0, color=C["ibov"], alpha=0.30, label="vendido (short)")
-    ax.plot(net.index, net.values, color=C["tinta"], linewidth=2, label="exposição líquida")
-    ax.plot(hedge.index, hedge.values, color=C["cdi"], linewidth=1.8, linestyle="--", label="hedge de Ibovespa")
+    ax.plot(net.index, net.values, color=C["neutro"], linewidth=1.5, linestyle="-",
+            label="líquida — só ações")
+    ax.plot(hedge.index, hedge.values, color=C["cdi"], linewidth=1.6, linestyle="--",
+            label="hedge de Ibovespa")
+    ax.plot(total.index, total.values, color=C["tinta"], linewidth=2.6,
+            label="líquida TOTAL (ações + hedge)", zorder=4)
     ax.axhline(0, color=C["eixo"], linewidth=1.2)
     ax.yaxis.set_major_formatter(PCT)
-    titulo(ax, "Exposição da carteira ao longo do tempo",
-           f"Líquida média {net.mean():+.1%} — o book é dollar-neutral por construção, e o hedge zera o beta residual.")
-    ax.legend(loc="upper left", ncol=2, fontsize=10)
+    titulo(ax, "Exposição da carteira — e por que a neutralidade não é automática",
+           f"A perna de ações sozinha NÃO é dollar-neutral: ela oscila entre {net.quantile(.05):+.0%} "
+           f"e {net.quantile(.95):+.0%} (faixa de 90%).\n"
+           f"É o hedge de índice que fecha a conta: a líquida TOTAL fica entre "
+           f"{total.quantile(.05):+.0%} e {total.quantile(.95):+.0%}, média {total.mean():+.1%}. "
+           f"Exposição bruta média {(lg - sh).mean():.0%}.")
+    ax.legend(loc="upper left", ncol=2, fontsize=9.5)
     return salvar(fig, "06_exposicoes")
 
 
@@ -464,7 +576,9 @@ def g_exposicao(d):
 # ==================================================================
 
 def g_heatmap(d):
-    r = d["r_estrategia"]
+    # Custo REALISTA: e o numero que o relatorio defende como o correto. Mostrar
+    # o mes a mes na premissa otimista de 5 bps e escolher a vitrine.
+    r = ativo(d, d["r_real"])
     m = (1 + r).resample("ME").prod() - 1
     tab = m.groupby([m.index.year, m.index.month]).first().unstack()
     tab = tab.reindex(columns=range(1, 13))
@@ -483,7 +597,8 @@ def g_heatmap(d):
             if pd.notna(v):
                 ax.text(j, i, f"{v*100:+.1f}", ha="center", va="center", fontsize=8,
                         color=C["tinta"] if abs(v) < lim * 0.55 else "white")
-    titulo(ax, "Retorno mensal do alfa (%)", "Vermelho = mês negativo · Azul = mês positivo")
+    titulo(ax, "Retorno mensal do alfa, com custo realista (%)",
+           "Vermelho = mês negativo · Azul = mês positivo")
     fig.colorbar(im, ax=ax, shrink=0.7, format=FuncFormatter(lambda v, _: f"{v:.0%}"))
     return salvar(fig, "07_heatmap_mensal")
 
@@ -493,30 +608,37 @@ def g_heatmap(d):
 # ==================================================================
 
 def g_rolling(d):
-    r = d["r_estrategia"]
+    r = ativo(d, d["r_real"])
     sh = r.rolling(DIAS).mean() / r.rolling(DIAS).std() * np.sqrt(DIAS)
     vol = r.rolling(63).std() * np.sqrt(DIAS)
 
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(12.8, 7.2), dpi=110, sharex=True,
-                                 gridspec_kw={"hspace": 0.3})
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(12.8, 7.8), dpi=110, sharex=True,
+                                 gridspec_kw={"hspace": 0.46})
     a1.plot(sh.index, sh.values, color=C["sinapse"], linewidth=1.8)
     a1.fill_between(sh.index, sh.values, 0, where=sh.values >= 0, color=C["sinapse"], alpha=0.14)
     a1.fill_between(sh.index, sh.values, 0, where=sh.values < 0, color=C["ibov"], alpha=0.14)
     a1.axhline(0, color=C["eixo"], linewidth=1.2)
     a1.set_ylabel("Sharpe 252d")
-    titulo(a1, "Sharpe móvel de 252 pregões", "Mostra que o resultado não é estável — e onde ele veio de fato.")
+    titulo(a1, "Sharpe móvel de 252 pregões (custo realista)",
+           "Mostra que o resultado não é estável — e onde ele veio de fato.")
 
     a2.plot(vol.index, vol.values, color=C["fundo"], linewidth=1.8)
     a2.axhline(0.12, color=C["ruim"], linestyle="--", linewidth=1.4)
     a2.annotate("teto do mandato: 12%", (vol.index[10], 0.12), xytext=(0, 6),
                 textcoords="offset points", color=C["ruim"], fontsize=10, fontweight="600")
     a2.axhline(vol.median(), color=C["neutro"], linestyle=":", linewidth=1.2)
-    a2.annotate(f"mediana {vol.median():.1%}", (vol.index[10], vol.median()),
-                xytext=(0, -14), textcoords="offset points", color=C["tinta2"], fontsize=10)
+    # A direita: a esquerda a curva sobe do zero e passa por cima do rotulo.
+    a2.annotate(f"mediana {vol.median():.1%}", (1.0, vol.median()),
+                xycoords=("axes fraction", "data"), xytext=(-4, 7),
+                textcoords="offset points", ha="right", color=C["tinta2"],
+                fontsize=10, fontweight="600")
     a2.yaxis.set_major_formatter(PCT)
     a2.set_ylabel("vol 63d")
     titulo(a2, "Volatilidade móvel contra o teto de mandato",
-           "Utilização do orçamento de risco ≈ 65%. O pico de 2020 é limitação do estimador de covariância, e está declarado.")
+           f"Utilização do orçamento de risco ≈ {vol.median()/0.12:.0%} (mediana {vol.median():.2%} "
+           f"contra teto de 12%). O pico de {vol.idxmax():%Y} chega a {vol.max():.2%}:\n"
+           "é limitação do estimador de covariância em regime de stress, e está declarado — "
+           f"{(vol.dropna() > 0.12).mean():.1%} dos pregões passam do teto.")
     return salvar(fig, "08_rolling_sharpe_vol")
 
 
@@ -525,7 +647,7 @@ def g_rolling(d):
 # ==================================================================
 
 def g_distribuicao(d):
-    r, ib = d["r_estrategia"], d["r_ibov"]
+    r, ib = ativo(d, d["r_real"]), ativo(d, d["r_ibov"])
     idx = r.index.intersection(ib.index)
 
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(12.8, 5.6), dpi=110,
@@ -548,7 +670,7 @@ def g_distribuicao(d):
     a2.set_ylabel("retorno diário da Sinapse (%)")
     a2.grid(True)
     titulo(a2, "Neutralidade de mercado",
-           f"beta {z[0]:+.3f} · correlação {ib.loc[idx].corr(r.loc[idx]):+.2f} — a nuvem não tem inclinação")
+           f"beta {z[0]:+.3f} · correlação {ib.loc[idx].corr(r.loc[idx]):+.2f}: a nuvem não tem inclinação")
     return salvar(fig, "09_distribuicao_neutralidade")
 
 
@@ -686,7 +808,10 @@ def g_regra(_):
 # ==================================================================
 
 def g_custo(d):
-    ano = d["comp_custo"].mean() * DIAS * 100
+    # Janela ativa: incluir o aquecimento (carteira zerada, custo zero) diluiria
+    # o custo anualizado para baixo -- justamente o numero que o material usa
+    # como sua evidencia mais desconfortavel.
+    ano = ativo(d, d["comp_custo"]).mean() * DIAS * 100
     comp = {"spread + taxas": ano["spread_taxas"], "impacto de mercado": ano["impacto"],
             "aluguel (BTC)": ano["aluguel"], "hedge": ano["hedge"]}
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(12.8, 5.6), dpi=110,
@@ -699,11 +824,13 @@ def g_custo(d):
         a1.text(v + 0.04, i, f"{v:.2f}%", va="center", fontsize=10.5, color=C["tinta2"], fontweight="600")
     a1.set_xlabel("% ao ano")
     a1.grid(axis="x"); a1.set_axisbelow(True)
-    titulo(a1, "Custo real, decomposto", f"Total {sum(vals):.2f}% ao ano · 60%+ é aluguel no período recente")
+    titulo(a1, "Custo real, decomposto",
+           f"Total {sum(vals):.2f}% ao ano · aluguel da ponta vendida é "
+           f"{comp['aluguel (BTC)']/sum(vals):.0%} do custo")   # mantido: o total só aparece aqui
 
-    g = d["giro"].mean()
-    alfa = d["bruto"].mean() / g * 1e4
-    custo = d["custo_real"].mean() / g * 1e4
+    g = ativo(d, d["giro"]).mean()
+    alfa = ativo(d, d["bruto"]).mean() / g * 1e4
+    custo = ativo(d, d["custo_real"]).mean() / g * 1e4
     a2.bar(["alfa gerado", "custo pago"], [alfa, custo], color=[C["bom"], C["ruim"]],
            width=0.5, edgecolor=C["surface"], linewidth=2)
     for i, v in enumerate([alfa, custo]):
@@ -711,7 +838,10 @@ def g_custo(d):
     a2.set_ylabel("bps por unidade de giro")
     a2.set_ylim(0, alfa * 1.28)
     titulo(a2, "O número que não depende da nossa calibragem",
-           "O sinal paga o próprio giro por uma margem de 0,1 bps.\nSe a banca achar nosso custo otimista ou pessimista, os dois lados estão na mesa.")
+           sub(f"Cada unidade de giro gera {alfa:.1f} bps de alfa bruto e paga {custo:.1f} bps de custo, "
+               f"margem de {alfa-custo:.1f} bps.\nSe a banca achar nosso modelo de custo otimista ou "
+               "pessimista, é esta margem que decide, e ela está na mesa.",
+               None))
     return salvar(fig, "12_custo_e_breakeven")
 
 
@@ -724,8 +854,9 @@ def t_metricas(d):
     A tabela principal do relatorio -- e ela precisa das DUAS leituras de custo.
 
     Publicar so a coluna de 5 bps seria o erro mais grave possivel: sob o custo
-    que o proprio projeto argumenta ser o correto, o excesso sobre o CDI vai de
-    +88,0% para -2,6%. Os dois numeros vao lado a lado, sempre.
+    que o proprio projeto argumenta ser o correto o excesso sobre o CDI cai para
+    menos da metade. Os dois numeros vao lado a lado, sempre, e o veredito e
+    formatado a partir do valor medido -- nunca escrito a mao.
     """
     a = d["mask_ativo"]
     # DUAS convencoes, rotuladas: `retorno/vol` (sem taxa livre) e SHARPE de
@@ -778,36 +909,55 @@ def t_metricas(d):
     linhas.append(f"| **Excesso sobre o CDI** | — | — | **{exc_flat:+.1%}** | "
                   f"**{exc_real:+.1%}** | {m['ibo']['retorno_total']-cdi_tot:+.1%} | — |")
 
-    nota = (f"\n\n> **Período:** {d['primeiro_ativo']:%d/%m/%Y} em diante — antes disso não há "
-            "posição (252 pregões de regressão + 231 de acumulação de aquecimento).\n\n"
+    # O texto NAO pode ser escrito a mao. Na versao anterior a nota afirmava "a
+    # estrategia nao bate o benchmark" logo ao lado do numero que ela mesma
+    # imprimia (+40,0% sobre o CDI) -- sobra de uma rodada em que o excesso era
+    # negativo. Conclusao codificada e conclusao que envelhece errado.
+    veredito = (
+        f"sob custo realista o fundo entrega **{exc_real:+.1%}** contra o CDI, com Sharpe "
+        f"**{sh_cdi['f_real']:.3f}**. A estratégia **bate o benchmark**, mas por uma margem "
+        "modesta: o Sharpe é da ordem do que um índice de ações entrega, com a diferença de "
+        "que este resultado não depende da direção do mercado."
+        if exc_real > 0 else
+        f"sob custo realista o fundo entrega **{exc_real:+.1%}** contra o CDI. A estratégia "
+        "**não bate o benchmark**. O que sobrevive é o mecanismo (ver placebo), não o "
+        "retorno líquido."
+    )
+    nota = (f"\n\n> **Período:** {d['primeiro_ativo']:%d/%m/%Y} a "
+            f"{d['idx_ativo'][-1]:%d/%m/%Y} ({len(d['idx_ativo'])} pregões) — antes disso não há "
+            "posição (252 pregões de regressão + 231 de acumulação de aquecimento). "
+            "**Todos os gráficos deste material usam exatamente esta janela.**\n\n"
             "> **As duas colunas de custo são obrigatórias.** `5 bps` é a premissa usual de "
             "backtest, calibrada para large cap líquida. `realista` aplica meio-spread por faixa "
             "de ADTV, impacto de mercado e aluguel (BTC) da ponta vendida — e **79% do giro deste "
             "book está abaixo de R$ 150 MM de ADTV**.\n\n"
-            f"> **A conclusão honesta:** sob custo realista o fundo entrega {exc_real:+.1%} contra "
-            "o CDI. **A estratégia não bate o benchmark.** O que sobrevive é o mecanismo (ver "
-            "placebo), não o retorno líquido.")
+            f"> **A leitura honesta:** {veredito}")
     return salvar_md("\n".join(linhas) + nota, "13_tabela_metricas_periodo")
 
 
 def t_anual(d):
-    w = d["pesos"]
+    # Janela ativa em TUDO. Com o painel completo, 2017 misturava 4,5 meses de
+    # carteira vazia com 7,5 meses de operacao: aparecia com 69 acoes (metade da
+    # media real), vol 4,7% e um Sharpe inflado por dias de retorno zero.
+    w = ativo(d, d["pesos"])
     acoes = [c for c in w.columns if c != "IBOV_SYNTHETIC"]
     n_pos = (w[acoes].abs() > 1e-6).sum(axis=1)
-    giro = w.fillna(0).diff().abs().sum(axis=1)
+    giro = ativo(d, d["giro"])
+    r_flat, r_real = ativo(d, d["r_flat"]), ativo(d, d["r_real"])
+    r_cdi, r_ibov = ativo(d, d["r_cdi"]), ativo(d, d["r_ibov"])
 
     linhas = ["| ano | alfa<br>*(5 bps)* | **alfa<br>*(realista)*** | fundo<br>*(realista)* | CDI | Ibovespa | Sharpe<br>*(5bps)* | MDD | vol | ações | giro/dia |",
               "|---|---|---|---|---|---|---|---|---|---|---|"]
-    for a in sorted(set(d["r_estrategia"].index.year)):
-        r = d["r_estrategia"][d["r_estrategia"].index.year == a]
-        c = d["r_cdi"][d["r_cdi"].index.year == a]
-        ib = d["r_ibov"][d["r_ibov"].index.year == a]
+    for a in sorted(set(r_flat.index.year)):
+        r = r_flat[r_flat.index.year == a]
+        c = r_cdi[r_cdi.index.year == a]
+        ib = r_ibov[r_ibov.index.year == a]
         # Aquecimento: o sinal so existe depois de 252d de beta + 231d de
         # acumulacao. Anos sem posicao nao entram na tabela.
         if len(r) < 20 or (n_pos[n_pos.index.year == a].mean() or 0) < 1:
             continue
         mm = metricas(r)
-        rr = d["r_real"][d["r_real"].index.year == a]
+        rr = r_real[r_real.index.year == a]
         linhas.append(
             f"| {a} | {(1+r).prod()-1:+.2%} | **{(1+rr).prod()-1:+.2%}** | "
             f"{(1+rr.add(c, fill_value=0)).prod()-1:+.2%} | {(1+c).prod()-1:+.2%} | "
@@ -815,7 +965,9 @@ def t_anual(d):
             f"{n_pos[n_pos.index.year == a].mean():.0f} | "
             f"{giro[giro.index.year == a].mean():.1%} |")
     nota = ("\n\n> **Por que 2016 não aparece:** o sinal exige 252 pregões de regressão mais 231 de "
-            "acumulação — cerca de dois anos de aquecimento. A estratégia só tem posição a partir de 2017.\n\n"
+            "acumulação — cerca de dois anos de aquecimento. A estratégia só tem posição a partir de "
+            f"{d['primeiro_ativo']:%d/%m/%Y}, então **{d['primeiro_ativo']:%Y} é um ano parcial** "
+            "(nem o retorno nem o giro dele são comparáveis aos anos cheios).\n\n"
             "> **Por que o alfa não é comparado ao CDI:** o P&L da Sinapse **já é** excesso sobre a taxa "
             "livre. A carteira é long-short autofinanciada — as vendidas financiam as compradas e o AUM "
             "fica em caixa rendendo CDI. Descontar o CDI de novo contaria a taxa livre duas vezes. "
@@ -873,17 +1025,17 @@ def t_sinais(d):
 def t_parametros(_):
     p = [
         ("Janela da regressão", "252 pregões", "12 meses de dados diários é o padrão para estimar beta com precisão sem pegar 'outra empresa' do passado.", "pré-registrado"),
-        ("Winsorização", "2% (1% por cauda)", "Impede que um outlier domine o z-score transversal. Medido: corta 3,8% das células — é guarda leve, não proteção contra caudas gordas.", "pré-registrado"),
-        ("Trava por nome", "5% do AUM", "Obriga o capital a se dividir em ≥20 teses. Hoje morde em apenas 3,3% dos dias — a expansão do universo a soltou.", "pré-registrado"),
+        ("Winsorização", "2% (1% por cauda)", "Impede que um outlier domine o z-score transversal. Medido: corta 2,57% das células — é guarda leve, não proteção contra caudas gordas.", "pré-registrado"),
+        ("Trava por nome", "5% do AUM", "Obriga o capital a se dividir em ≥20 teses. Hoje morde em apenas 2,3% dos dias — a expansão do universo a soltou.", "pré-registrado"),
         ("Trava por setor", "25% do gross", "Impede que um boom setorial vire aposta macro disfarçada de aposta em rede.", "pré-registrado"),
         ("Trava de liquidez", "10% do ADTV (21d)", "Limita a POSIÇÃO ao que seria montável. Não governa impacto de execução — quem faz isso é o modelo de custo.", "pré-registrado"),
-        ("Volatilidade-alvo", "12% a.a.", "TETO de orçamento de risco, não alvo atingido. Utilização ~65%. Atingir 12% exigiria 8,3% por nome, acima da trava.", "pré-registrado"),
+        ("Volatilidade-alvo", "12% a.a.", "TETO de orçamento de risco, não alvo atingido. Utilização medida 63% (mediana da vol de 63d: 7,54%). Atingir 12% exigiria 8,3% por nome, acima da trava.", "pré-registrado"),
         ("AUM", "R$ 100 milhões", "Fundo de tamanho médio viável no Brasil. Curva de capacidade testada em 20 / 100 / 300 / 1000 MM.", "pré-registrado"),
-        ("Horizonte do sinal", "12-1 (231d, defasado 22)", "IC/√h é constante em T+1/5/21/63 — assinatura de difusão lenta. Fenômeno medido, não parâmetro calibrado.", "acrescentado 08/2026"),
+        ("Horizonte do sinal", "12-1 (231d, defasado 22)", "IC cresce com o horizonte (+0,0076 em T+1 → +0,0389 em T+126). IC/√h cai 45%, contra 91% de um efeito de 1 dia: difusão lenta, medida.", "acrescentado 08/2026"),
         ("Modelo do choque", "só-mercado (α + β·IBOV)", "A tese é difusão intra-indústria: o termo setorial removia justamente a informação que se propaga.", "acrescentado 08/2026"),
         ("Grafo", "ensemble de 6 variantes", "K ∈ {2,3,5} × peso ∈ {igual, ADTV}. TODAS entram — nenhuma escolhida por desempenho.", "acrescentado 08/2026"),
         ("Suavização dos pesos", "63 pregões", "Deve ser da ordem do horizonte do sinal. Consequência estrutural, não calibragem.", "acrescentado 08/2026"),
-        ("Custo de transação", "3 camadas", "spread por faixa de ADTV + impacto √(participação) + aluguel BTC. Medido: 33,6 bps por unidade de giro.", "acrescentado 08/2026"),
+        ("Custo de transação", "3 camadas", "spread por faixa de ADTV + impacto √(participação) + aluguel BTC. Medido: 36,6 bps por unidade de giro, contra 68,3 bps de alfa gerado.", "acrescentado 08/2026"),
     ]
     linhas = ["| parâmetro | valor | justificativa | origem |", "|---|---|---|---|"]
     for a, b, c, e in p:
@@ -895,7 +1047,13 @@ def t_parametros(_):
 # 14. EVOLUCAO DO RESULTADO (as correcoes)
 # ==================================================================
 
-def g_evolucao(_):
+def g_evolucao(d):
+    # As duas ultimas barras sao MEDIDAS a cada execucao. A ultima estava
+    # congelada em "+36,4%", de uma rodada anterior a correcao de calendario --
+    # justo num grafico cujo argumento e "publicamos o numero pior".
+    a = d["mask_ativo"]
+    final_flat = ((1 + d["r_flat"][a]).prod() - 1) * 100
+    final_real = ((1 + d["r_real"][a]).prod() - 1) * 100
     etapas = [
         ("baseline\n(mocks + bug)", -63.0, C["ruim"]),
         ("+ grafo e vol\ncorrigidos", -1.3, C["ruim"]),
@@ -904,7 +1062,9 @@ def g_evolucao(_):
         ("+ Sharpe e trava\ncorrigidos", 8.5, C["ibov"]),
         ("+ grafo\npoint-in-time", 11.6, C["ibov"]),
         ("+ mapa setorial\ncorrigido", 27.9, C["bom"]),
-        ("+ horizonte 12-1\ne grafo mecânico", 36.4, C["sinapse"]),
+        ("+ horizonte 12-1\ne grafo mecânico", 36.4, C["neutro"]),
+        ("+ calendário da B3\ncorrigido  (5 bps)", final_flat, C["sinapse"]),
+        ("= com custo\nREALISTA", final_real, C["ibov"]),
     ]
     fig, ax = fig169(12.8, 6.4)
     x = np.arange(len(etapas))
@@ -914,15 +1074,21 @@ def g_evolucao(_):
         ax.annotate(f"{v:+.1f}%", (i, v), xytext=(0, 6 if v >= 0 else -16),
                     textcoords="offset points", ha="center", fontsize=11,
                     fontweight="700", color=C["tinta"])
-    ax.set_xticks(x); ax.set_xticklabels([e[0] for e in etapas], fontsize=9.5)
+    ax.set_xticks(x); ax.set_xticklabels([e[0] for e in etapas], fontsize=9)
     ax.axhline(0, color=C["eixo"], linewidth=1.4)
-    ax.set_ylabel("retorno acumulado em 10 anos")
+    ax.set_ylabel("retorno acumulado do alfa")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}%"))
-    titulo(ax, "A evolução do resultado — e as duas vezes em que o número PIOROU",
+    ax.set_ylim(min(vals) * 1.18, max(vals) * 1.30)
+    titulo(ax, "A evolução do resultado — e as três vezes em que o número PIOROU",
            "Remover o viés de sobrevivência custou metade do resultado (+19,9% → +8,7%) e foi adotado assim mesmo.\n"
-           "Corrigir o grafo para point-in-time custou mais 0,58 p.p./ano. Publicar o número pior é o que torna o resto crível.")
+           "Corrigir o grafo para point-in-time custou mais 0,58 p.p./ano. Aplicar o custo REALISTA custa outra metade "
+           f"({final_flat:+.1f}% → {final_real:+.1f}%).\nPublicar o número pior é o que torna o resto crível.")
     ax.annotate("", xy=(3, 12), xytext=(2, 23), arrowprops=dict(arrowstyle="-|>", color=C["ruim"], linewidth=2.2))
     ax.text(2.55, 25, "viés removido", fontsize=10, color=C["ruim"], fontweight="700", ha="center")
+    ax.annotate("", xy=(9, final_real + 4), xytext=(8, final_flat + 6),
+                arrowprops=dict(arrowstyle="-|>", color=C["ruim"], linewidth=2.2))
+    ax.text(8.5, final_flat + 8, "custo realista", fontsize=10, color=C["ruim"],
+            fontweight="700", ha="center")
     return salvar(fig, "17_evolucao_correcoes")
 
 
@@ -943,13 +1109,22 @@ GRAFICOS = {
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apenas", default=None, help="lista separada por virgula")
+    ap.add_argument("--deck", action="store_true",
+                    help="versoes para o deck: subtitulo curto onde o slide ja "
+                         "diz a mesma coisa. Salva em saida/deck/.")
     args = ap.parse_args()
+
+    global DECK
+    DECK = args.deck
 
     print("=" * 70)
     print(" BLOCO 7 -- ACERVO VISUAL")
     print("=" * 70)
     d = carregar()
-    print(f"\nperiodo: {d['curvas'].index.min():%Y-%m-%d} a {d['curvas'].index.max():%Y-%m-%d}\n")
+    print(f"\ndados:  {d['curvas'].index.min():%Y-%m-%d} a {d['curvas'].index.max():%Y-%m-%d}")
+    print(f"janela do material (carteira com posicao): {d['idx_ativo'][0]:%Y-%m-%d} a "
+          f"{d['idx_ativo'][-1]:%Y-%m-%d}  ({len(d['idx_ativo'])} pregoes)")
+    print("todo grafico e toda tabela usam a segunda linha.\n")
 
     alvos = args.apenas.split(",") if args.apenas else list(GRAFICOS)
     for nome in alvos:

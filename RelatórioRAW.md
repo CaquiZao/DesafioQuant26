@@ -259,7 +259,14 @@ ALFA  por unidade de giro : 68,3 bps      → folga de 1,87x
 
 ## 4.1 As duas leituras — e as duas precisam estar na mesa
 
-![curva](fase%207%20-%20relatorio/saida/01_retorno_acumulado.png)
+![curva 5 bps](fase%207%20-%20relatorio/saida/01a_retorno_acumulado_5bps.png)
+![curva realista](fase%207%20-%20relatorio/saida/01b_retorno_acumulado_realista.png)
+
+> **Os dois gráficos usam a mesma escala vertical de propósito** — a queda de +200,2% para
+> +143,7% é *inteiramente* modelo de custo. Mesma carteira, mesmo sinal, mesmo período
+> (19/05/2017 a 30/12/2025, 2.140 pregões). **Todo gráfico e toda tabela deste relatório usam
+> exatamente essa janela**: antes de 19/05/2017 não há posição, porque o sinal exige 252 pregões
+> de regressão mais 231 de acumulação para existir.
 
 | métrica | Sinapse<br>*(5 bps)* | **Sinapse<br>*(realista)*** | Fundo<br>*(5 bps)* | **Fundo<br>*(realista)*** | Ibovespa | CDI |
 |---|---|---|---|---|---|---|
@@ -315,6 +322,16 @@ alegada.
 > **3 dos 9 anos são negativos com custo real** (era 5 antes da correção de calendário: 2017 e
 > 2018 eram negativos *por causa do bug*). **2022, 2023 e 2025 seguem negativos** — a
 > fragilidade enfraqueceu, mas não desapareceu, e não deve ser suavizada.
+>
+> **O resultado é concentrado, e isso é a crítica mais forte contra a estratégia.**
+> 2020 e 2021 sozinhos somam **+23%** — mais que os **+20%** de todo o período. Ou seja: fora
+> desses dois anos, o conjunto dos outros sete é levemente negativo. Dois anos de mercado
+> excepcionalmente disperso não são evidência suficiente de um efeito estável, e é por isso que
+> o placebo e o protocolo IS/OOS (seção 5) carregam mais peso aqui do que a curva de retorno.
+>
+> **2017 é ano parcial** — a estratégia só passa a ter posição em 19/05/2017. As três séries
+> (Sinapse, Ibovespa, CDI) usam essa mesma janela parcial no gráfico e na tabela, senão a
+> comparação de 2017 seria 7,5 meses contra 12.
 
 ## 4.4 Carteira e execução
 
@@ -326,16 +343,25 @@ alegada.
 | ações na carteira | **mediana 134/dia** (p95 = 152) |
 | **apostas independentes (breadth)** | **16,1** |
 | giro | 3,08%/dia |
-| exposição bruta | mediana 140,2% (máx 186,2%) |
-| **exposição líquida** | média −2,3%, **desvio 25,1%, \|máx\| 57,0%** |
+| exposição bruta | mediana 140,2% (máx 186,2%) · média 136,2% |
+| exposição líquida — **só ações** | média −2,3%, **faixa de 90%: −44,6% a +40,7%** |
+| **exposição líquida — total (ações + hedge)** | média **+2,7%**, faixa de 90%: **−7,7% a +14,2%** |
 | dias com posição no teto de 5% | **2,3%** |
 | concentração (top-5 do P&L) | **13,2%** |
 
 > ⚠️ **134 posições não são 134 apostas.** Satélites do mesmo subsetor recebem sinal quase
-> idêntico — correlação **+0,887**, e 35% dos pares acima de 0,99. **Breadth efetiva: 16,2.**
+> idêntico — correlação **+0,887**, e 35% dos pares acima de 0,99. **Breadth efetiva: 16,1.**
 >
-> ⚠️ **A exposição líquida chega a ±57%.** Não há trava de exposição líquida — é a lacuna de
-> controle de risco mais relevante, e está na lista de próximos passos.
+> ⚠️ **A neutralidade não é automática — ela é comprada com o hedge de índice.** A perna de
+> ações sozinha oscila de −44,6% a +40,7% de exposição líquida: o casamento long/short por
+> subsetor *não* entrega dollar-neutralidade por construção, ao contrário do que a versão
+> anterior deste relatório afirmava. **É a perna de futuro de Ibovespa que fecha a conta**,
+> trazendo a líquida total para a faixa −7,7% / +14,2%.
+>
+> ⚠️ **Ainda assim, não há trava explícita de exposição líquida** — o hedge é dimensionado por
+> beta, não por valor. Nos dias em que o beta estimado se descola do valor de mercado das
+> pontas, sobra exposição direcional não intencional. É a lacuna de controle de risco mais
+> relevante, e está na lista de próximos passos.
 
 Ver `saida/15_tabela_sinais_exemplo.md` — a carteira **não entra e sai** de posições; ajusta o
 *tamanho* continuamente.
@@ -393,11 +419,13 @@ em T+21 medido de forma independente no Bloco 7.)*
 
 ## 5.1 Onde a estratégia está
 
-**O mecanismo é real** (placebo, 3–5σ). **A neutralidade funciona** (COVID +0,9% contra −29,6%).
+**O mecanismo é real** (placebo, 3–5σ). **A neutralidade funciona** (COVID +1,40% contra −29,62%).
 **O sinal paga o próprio giro** com folga de **1,87×** (68,3 contra 36,6 bps).
 
-**Mas o alfa é modesto:** +2,13%/ano com custo realista, e **5 dos 9 anos são negativos**. O
-produto (CDI + alfa) bate o CDI em +15,7% em 8,6 anos.
+**Mas o alfa é modesto:** +2,13%/ano com custo realista, e **3 dos 9 anos são negativos** —
+com o agravante de que **2020 e 2021 sozinhos somam mais que o período inteiro**. O produto
+(CDI + alfa) bate o CDI em **+40,0% em 8,6 anos**, com Sharpe **0,296** contra 0,244 do
+Ibovespa: ganha, mas por margem estreita.
 
 > **A tese é verdadeira e modesta — e sabemos disso porque medimos as duas coisas.**
 
@@ -569,16 +597,18 @@ Auditoria dedicada encontrou dez afirmações indefensáveis no material anterio
 
 | alegação anterior | número correto |
 |---|---|
-| "Excesso sobre o CDI de +88,0%" | **+11,6%** com custo realista |
+| "Excesso sobre o CDI de +88,0%" | **+40,0%** com custo realista |
 | "IC/√h é constante — assinatura de difusão" | **cai 45%** |
-| "O sinal paga o próprio giro" (por 0,1 bps) | **40,7 vs 32,2 bps** — margem de 26% |
-| "141 nomes/dia" | **mediana 134**; e **16,2** apostas independentes |
+| "O sinal paga o próprio giro" (por 0,1 bps) | **68,3 vs 36,6 bps** — folga de 1,87× |
+| "141 nomes/dia" | **mediana 134**; e **16,1** apostas independentes |
 | "O beta é o beta de mercado (~1,0)" | **mediana 0,82** |
 | "A regra reproduz 100% dos elos" | **95%** (38/40) |
-| "Vol de 63d atingiu 18,12%" | **13,71%**; e 7,1% dos dias acima de 12% |
-| "Volatilidade 7,64% / utilização 65%" | **7,56%**, medida só no período ativo |
+| "Vol de 63d atingiu 18,12%" | **13,63%**; e 7,2% dos dias acima de 12% |
+| "Volatilidade 7,64% / utilização 65%" | **8,29%** anual; mediana da vol de 63d em 7,54% (**63%** do teto) |
 | "73% do giro abaixo de R$150MM" | **79%** |
 | "Winsorização corta 3,8% das células" | **2,57%** |
+| "Gráfico de retorno acumulado" (período completo) | plotava desde 2016 enquanto as tabelas usavam o período ativo — Ibovespa aparecia **+282%** no gráfico e **+161,6%** na tabela. Toda figura usa agora a mesma janela |
+| "5 dos 9 anos são negativos" | **3 dos 9** após a correção de calendário |
 
 > **Isto é o ponto do trabalho inteiro:** encontrar os próprios erros e publicar o número pior.
 > Ver uma equipe que testou, falhou e manteve o registro vale mais que meio ponto de Sharpe.

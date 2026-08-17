@@ -10,8 +10,8 @@
 | **SHARPE** *(excesso sobre o CDI)* | — | — | **0.592** | **0.296** | **0.244** | — |
 | **Excesso sobre o CDI** | — | — | **+96.4%** | **+40.0%** | +57.8% | — |
 
-> **Período:** 19/05/2017 em diante — antes disso não há posição (252 pregões de regressão + 231 de acumulação de aquecimento).
+> **Período:** 19/05/2017 a 30/12/2025 (2140 pregões) — antes disso não há posição (252 pregões de regressão + 231 de acumulação de aquecimento). **Todos os gráficos deste material usam exatamente esta janela.**
 
 > **As duas colunas de custo são obrigatórias.** `5 bps` é a premissa usual de backtest, calibrada para large cap líquida. `realista` aplica meio-spread por faixa de ADTV, impacto de mercado e aluguel (BTC) da ponta vendida — e **79% do giro deste book está abaixo de R$ 150 MM de ADTV**.
 
-> **A conclusão honesta:** sob custo realista o fundo entrega +40.0% contra o CDI. **A estratégia não bate o benchmark.** O que sobrevive é o mecanismo (ver placebo), não o retorno líquido.
+> **A leitura honesta:** sob custo realista o fundo entrega **+40.0%** contra o CDI, com Sharpe **0.296**. A estratégia **bate o benchmark**, mas por uma margem modesta: o Sharpe é da ordem do que um índice de ações entrega, com a diferença de que este resultado não depende da direção do mercado.
