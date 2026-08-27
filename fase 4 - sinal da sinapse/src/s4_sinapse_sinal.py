@@ -38,7 +38,7 @@ MODO_CHOQUE = "mercado"
 MODO_GRAFO = "regra"
 
 # Horizonte do sinal: acumulacao 12-1 (231 pregoes, defasados 22).
-# Ver `acumular_choque` para a evidencia (IC/sqrt(h) constante).
+# Ver `acumular_choque` para a evidencia (o IC cresce com o horizonte).
 JANELA_ACUMULACAO = 231
 DEFASAGEM_ACUMULACAO = 22
 MIN_OBS_ACUMULACAO = 120
@@ -318,15 +318,24 @@ def calcular_choque_mercado(df_retornos, df_indices, tickers_alvo=None):
     `beta2*SETOR` da versao anterior removia exatamente essa informacao --
     limpava o sinal do proprio conteudo.
 
-    Medido (IC em T+21, choque acumulado 12-1):
+    Medido (IC em T+21, choque acumulado 12-1), rodada de 16/08/2026:
         grafo manual : +0,0506 (t 2,45)  ->  +0,0621 (t 2,86)
         regra A3     : +0,0130 (t 1,21)  ->  +0,0315 (t 2,82)
+
+    ATENCAO: numeros do PROTOTIPO, anteriores a correcao dos 36 feriados-
+    fantasma do calendario, e nao re-medidos -- refazer o teste exige rodar o
+    pipeline com o termo setorial de volta. Sustentam o SINAL e a ordem de
+    grandeza da diferenca, nao os valores absolutos. O IC em T+21 da
+    configuracao final e +0,0225 (ver `saida/05_ic_por_horizonte.md`).
 
     Isso tambem reconcilia tres resultados que estavam soltos: por que
     `concorrente = +1` funciona, por que o controle por subsetor PIOROU o
     resultado (`s13`), e por que o placebo do mecanismo falhava no in-sample.
 
-    BONUS: o beta desta regressao E o beta de mercado (mediana ~1,01). Na
+    BONUS: o beta desta regressao E o beta de mercado, nao um coeficiente
+    parcial. Mediana medida: 0,82 (re-medida em 27/08/2026 em
+    `betas_sinapse.parquet`, 1.348.269 obs: 0,8178). Este docstring dizia
+    "~1,01" -- alegacao ja listada como corrigida no RelatorioRAW.md 7.3. Na
     versao bivariada ele era um coeficiente PARCIAL (mediana 0,335), porque o
     indice setorial tem ele mesmo beta ~1 -- e usar coeficiente parcial como
     razao de hedge sub-hedgeava o book. O bug some por construcao.
@@ -400,20 +409,30 @@ def acumular_choque(df_choques, janela=JANELA_ACUMULACAO, defasagem=DEFASAGEM_AC
     POR QUE O HORIZONTE MUDOU
     -------------------------
     A tese original dizia propagacao em T+1. Medindo o IC do sinal contra o
-    retorno futuro em varios horizontes:
+    retorno futuro em varios horizontes, o IC CRESCE com o horizonte -- se o
+    efeito fosse de um unico dia, alongar o horizonte o diluiria.
 
-        h        T+1      T+5      T+21     T+63
-        IC     0,0073   0,0146   0,0315   0,0505
-        IC/sqrt(h)  0,0073   0,0065   0,0069   0,0064
+    NAO REPRODUZIR OS NUMEROS AQUI. Fonte unica:
+    `fase 7 - relatorio/saida/05_ic_por_horizonte.md`, regenerado por
+    `r1_visuais.py` a cada execucao. Numero em docstring vira mentira na
+    rodada seguinte -- foi exatamente o que aconteceu com este bloco.
 
-    `IC/sqrt(h)` praticamente constante e a assinatura de um processo de
-    DIFUSAO: a informacao se espalha por meses, nao por um dia. Isso nao e um
-    parametro calibrado -- e um fenomeno medido, e e o argumento mais forte
-    da tese.
+    O que essa fonte mostra (27/08/2026): o IC vai de +0,0076 em T+1 a +0,0389
+    em T+126, e `IC/sqrt(h)` cai 54%. Nao e constante -- mas esta muito longe
+    dos 91% que um efeito de um unico dia produziria. E a assinatura de
+    DIFUSAO LENTA, e nao e um parametro calibrado: e um fenomeno medido.
+    Ressalva: so T+1 e T+5 tem t > 2.
 
-    Consequencia pratica: o giro cai de 9,7% para ~1,3% ao dia, e o alfa por
-    unidade de giro sobe de 19 para 235 bps contra ~73 bps de custo. Antes a
-    estrategia pagava para operar.
+    Consequencia pratica: o giro cai de 9,7% para 3,08% ao dia e o alfa por
+    unidade de giro sobe de 19 para 68,3 bps (ambos re-medidos em 27/08/2026).
+    Antes a estrategia pagava para operar.
+
+    REMOVIDO EM 27/08/2026: este docstring trazia a tabela 0,0073 / 0,0146 /
+    0,0315 / 0,0505 e a afirmacao "IC/sqrt(h) praticamente constante". Eram do
+    prototipo de 16/08, ANTERIORES a correcao dos feriados-fantasma, nunca
+    produzidos por este pipeline, e a alegacao de constancia ja constava como
+    refutada no RelatorioRAW.md 7.3. Estavam levando quem le o codigo a
+    reportar numeros errados. Nenhuma linha de codigo foi alterada.
 
     A defasagem de 22 pregoes (o "-1" do 12-1) exclui o mes mais recente, que
     e a convencao da literatura para evitar contaminacao por reversao de
