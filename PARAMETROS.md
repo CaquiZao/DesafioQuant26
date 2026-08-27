@@ -44,6 +44,13 @@ apagada.
 > maiores contribuintes de P&L saíram de **79%** do total (v1) para **13,2%** (configuração
 > atual).
 
+> **📌 Nota de correção (27/08/2026) — o "3,8%" da nota acima também ficou velho.**
+> A saída atual do pipeline diz **2,57% das células**
+> (`fase 7 - relatorio/saida/16_tabela_parametros.md`, gerado por `r1_visuais.py`), e o §7.3 do
+> `RelatórioRAW.md` já lista "corta 3,8%" como corrigido para 2,57%. O **argumento** da nota de
+> 16/08 não muda — é guarda leve, não proteção contra caudas gordas —, só o dígito. Este número não foi
+> re-medido aqui: o valor acima foi alinhado com o artefato gerado, que é a fonte única.
+
 ## 3. Trava máxima por nome (% da carteira)
 
 - **Valor:** 5%.
@@ -74,6 +81,8 @@ apagada.
 > `fase 3 - backtest/src/s3b_custos.py`), com impacto de mercado pela lei da raiz quadrada e
 > aluguel da ponta vendida. Medido: o custo realista é **33,6 bps por unidade de giro**, contra
 > os 5 bps que o backtest assumia — e o alfa por unidade de giro é 33,7 bps.
+> ⚠️ **Re-medido em 27/08/2026: o alfa por unidade de giro é 68,3 bps.** Ver a nota de
+> correção no §11.
 >
 > Dois bugs relacionados foram corrigidos em 04/08 e 16/08: a trava era violada em 59,6% dos dias
 > (a suavização de pesos rodava depois dela e não a reaplicava) e o `clip` com limite NaN não
@@ -115,6 +124,14 @@ apagada.
 > Baixar a meta para 7,5% depois de medir 7,64% seria exatamente o ajuste retroativo que o
 > cabeçalho deste documento proíbe.
 
+> **📌 Nota de correção (27/08/2026) — os números de vol acima são pré-correção de calendário.**
+> Depois da correção dos 36 feriados-fantasma (`1deffe1`), a vol de 63 dias tem **máximo de 13,63%
+> (abr/2020)** e mediana de 7,54% — não 18,12% em 25/05/2020 (`RelatórioRAW.md` §4.5; o §7.3 lista
+> "atingiu 18,12%" como corrigido). O percentual de dias acima do teto aparece como **7,0%** num
+> trecho do RAW e **7,2%** em outro; nenhum dos dois foi re-medido, então o valor não é fixado aqui.
+> **A decisão da nota de 16/08 não muda, e fica mais fácil de defender:** o estouro do teto era
+> menor do que se pensava.
+
 ## 7. Assets Under Management (AUM)
 
 - **Valor Padrão:** R$ 100.000.000 (100 milhões).
@@ -151,17 +168,37 @@ apagada.
 - **Justificativa — e ela é medida, não escolhida.** A tese original supunha propagação em T+1.
   Medindo o IC do sinal contra o retorno futuro em vários horizontes:
 
-  | h | T+1 | T+5 | T+21 | T+63 |
-  |---|---|---|---|---|
-  | IC | 0,0073 | 0,0146 | 0,0315 | 0,0505 |
-  | **IC/√h** | **0,0073** | **0,0065** | **0,0069** | **0,0064** |
+  | h | T+1 | T+5 | T+21 | T+63 | T+126 |
+  |---|---|---|---|---|---|
+  | IC | +0,0076 | +0,0129 | +0,0225 | +0,0359 | +0,0389 |
+  | **t** | **2,99** | **2,20** | 1,79 | 1,59 | 1,05 |
+  | **IC/√h** | **0,0076** | **0,0058** | **0,0049** | **0,0045** | **0,0035** |
 
-  `IC/√h` praticamente constante é a assinatura de um processo de **difusão**: a informação se
-  espalha por meses, não por um dia. **A janela não foi calibrada para maximizar nada — ela é
+  `IC/√h` **cai 54%** de T+1 a T+126 — não é constante. Mas está muito longe dos **91%** que um
+  efeito de um único dia produziria, e é isso que a tabela sustenta: **difusão lenta** — informação
+  que se espalha por meses, não por um dia. **A janela não foi calibrada para maximizar nada — ela é
   consequência de um fenômeno medido.** A defasagem de 22 pregões (o "−1") é a convenção da
   literatura para evitar contaminação por reversão de curto prazo.
-- **Efeito colateral:** o giro cai de 9,7% para ~4,8% ao dia, e o alfa por unidade de giro sobe
-  de 19 para 33,7 bps. No horizonte de um dia a estratégia **pagava para operar**.
+
+  Ressalva honesta: **só T+1 e T+5 têm t > 2.** Nos horizontes longos as janelas se sobrepõem e o
+  n efetivo cai, então cada horizonte isolado não cruza a significância. A evidência está no
+  **padrão monotônico** e no **placebo do gatilho** (§4.7 do `RelatórioRAW.md`), não no t de um
+  horizonte só.
+
+  > **Fonte única do IC por horizonte:** `fase 7 - relatorio/saida/05_ic_por_horizonte.md`, gerado
+  > por `r1_visuais.py`. Não repetir os dígitos em outro lugar sem apontar para esse arquivo.
+  >
+  > **Correção de 27/08/2026 — transcrição, não resultado.** A tabela que estava aqui
+  > (0,0073 / 0,0146 / 0,0315 / 0,0505, com `IC/√h` descrito como "praticamente constante") vinha do
+  > protótipo de 16/08, **anterior** à correção dos 36 feriados-fantasma do calendário (`1deffe1`), e
+  > nunca foi produzida pelo pipeline — não há código no repositório que gere aqueles valores. A
+  > alegação de constância já constava como **refutada** no §7.3 do `RelatórioRAW.md`; este parágrafo
+  > ainda a repetia. Nenhum código, dado ou resultado mudou nesta correção.
+- **Efeito colateral:** o giro cai de 9,7% para **3,08% ao dia**, e o alfa por unidade de giro sobe
+  de 19 para **68,3 bps**. No horizonte de um dia a estratégia **pagava para operar**.
+  *(Giro e alfa por unidade de giro re-medidos em 27/08/2026 na janela ativa de 2.140 pregões,
+  direto de `df_weights_sinapse.parquet`: **3,0791%/dia** e **68,3 bps**. Os valores anteriores —
+  ~4,8% e 33,7 bps — eram pré-correção de calendário.)*
 
 ## 9. Modelo do choque — só-mercado
 
@@ -169,11 +206,19 @@ apagada.
 - **Substitui:** `retorno = α + β₁·IBOV + β₂·SETOR + ε`.
 - **Justificativa:** a tese é difusão de informação **intra-indústria**. O termo `β₂·SETOR`
   removia exatamente a informação que se quer propagar — limpava o sinal do próprio conteúdo.
-  Medido (IC em T+21): grafo manual +0,0506 → **+0,0621**; regra mecânica +0,0130 → **+0,0315**.
+  Medido (IC em T+21, rodada de 16/08): grafo manual +0,0506 → **+0,0621**; regra mecânica
+  +0,0130 → **+0,0315**.
+  ⚠️ Números do **protótipo**, anteriores à correção do calendário e não re-medidos: refazer o
+  teste exige rodar o pipeline com o termo setorial de volta. Eles sustentam o **sinal e a ordem
+  de grandeza** da diferença, não os valores absolutos. O IC em T+21 da configuração final é
+  **+0,0225** (§8).
 - **Reconcilia três resultados** que estavam soltos: por que `concorrente = +1` funciona, por que
   o controle por subsetor **piorou** o resultado, e por que o placebo do mecanismo falhava no
   in-sample.
-- **Bônus:** o β desta regressão **é** o beta de mercado (mediana ~1,0). Na versão bivariada era
+- **Bônus:** o β desta regressão **é** o beta de mercado, e não um coeficiente parcial.
+  **Mediana medida: 0,82** (re-medida em 27/08/2026 em `betas_sinapse.parquet`, 1.348.269
+  observações: 0,8178). A versão anterior deste parágrafo dizia "~1,0" — alegação que o §7.3 do
+  `RelatórioRAW.md` já listava como corrigida. Na versão bivariada era
   um coeficiente *parcial* (mediana 0,335), porque o índice setorial tem ele mesmo beta ~1 —
   e usar coeficiente parcial como razão de hedge sub-hedgeava o book.
 
@@ -212,6 +257,16 @@ apagada.
 - **Resultado:** custo total 4,02% a.a. = **33,6 bps por unidade de giro**, contra **33,7 bps de
   alfa por unidade de giro**. Este par é o resultado mais defensável do projeto: mostra que a
   conclusão não depende da calibragem de custo, e sim de uma propriedade medida do sinal.
+
+> **📌 Nota de correção (27/08/2026) — este par de números é pré-correção de calendário.**
+> Re-medido hoje direto de `df_weights_sinapse.parquet`, na janela ativa de 2.140 pregões: o giro
+> é **3,0791%/dia** (era ~4,8%) e o alfa por unidade de giro é **68,3 bps**, não 33,7 bps. O custo
+> total anual oficial é **2,84% a.a.** (`RelatórioRAW.md`), não 4,02%, e o custo por unidade de
+> giro no material de entrega é **36,6 bps**, não 33,6 — **esses dois não foram re-medidos**, porque
+> exigem rodar `s3b_custos.py`.
+> **O argumento fica mais forte, não mais fraco:** a folga entre alfa e custo por unidade de giro
+> passa de ~1,0× (33,7 contra 33,6) para **1,87×** (68,3 contra 36,6). A frase "a conclusão não
+> depende da calibragem de custo" continua verdadeira — e agora com margem.
 - **Achado:** no período pós-2019, **60%+ do custo é aluguel da ponta vendida** — carrego
   proporcional ao short, **imune a qualquer redução de giro**.
 

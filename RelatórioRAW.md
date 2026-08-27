@@ -92,13 +92,138 @@ retorno_VALE = α + β · Ibovespa + ε      ← regressão móvel de 252 pregõ
                           o choque limpo
 ```
 
-> **Por que NÃO removemos o setor.** A tese é difusão **intra-indústria** — o termo setorial
-> removia exatamente a informação que se quer propagar. Removê-lo elevou o IC de +0,0506 para
-> **+0,0621**.
+### Por que saiu o termo setorial — e por que essa é a mudança mais importante do projeto
 
-⚠️ **Ressalva medida:** o β tem **mediana 0,82**, não ~1,0. O viés vem de negociação
-não-sincronizada nos 543 tickers. É o beta que o hedge usa, e ele funciona (correlação final com
-o Ibovespa: **−0,015**), mas dizer que "é o beta de mercado puro" seria forte demais.
+A primeira versão regredia contra **duas** coisas:
+
+```
+retorno_USIM5 = α + β₁·Ibovespa + β₂·SETOR + ε        ← versão original
+```
+
+E o `SETOR` não era um índice de mercado qualquer. Era, literalmente, **a média dos retornos das
+outras ações do mesmo setor, excluindo a própria ação** (`s4_sinapse_sinal.py` da v1, commit
+`50fc3cc`). Ou seja: **a média dos vizinhos.**
+
+**O problema, em uma frase:** a estratégia aposta que o movimento do vizinho chega atrasado na
+ação. E a regressão subtraía o movimento do vizinho **antes** de propagá-lo.
+
+O que sobrava no resíduo `ε` era só o que aconteceu **exclusivamente** naquela empresa — um
+incêndio numa planta, uma troca de CEO, uma multa. Coisas que, por definição, **não têm por que
+mover mais ninguém.** Depois propagávamos exatamente isso para os vizinhos e nos perguntávamos
+por que o sinal era fraco.
+
+> **A analogia:** queríamos escutar a notícia que está sendo gritada no bairro. O termo setorial
+> era um fone com cancelamento de ruído calibrado exatamente na voz do bairro. Colocávamos o fone
+> e depois reclamávamos que não dava para ouvir.
+
+**A tese exige o contrário.** "Difusão intra-indústria" quer dizer: sai uma notícia que afeta o
+ramo inteiro — minério, câmbio, juro — o nome líquido reprecifica em minutos e o ilíquido leva
+semanas. **O componente que difunde É o componente de setor.** Ele não é contaminação a ser
+limpa: é a carga útil.
+
+O único fator que precisa sair é o **mercado**, porque a estratégia é market-neutral e não quer
+apostar na direção da bolsa. Por isso a versão final tem **um** regressor:
+
+```
+retorno_USIM5 = α + β·Ibovespa + ε                    ← versão final
+```
+
+#### A evidência: o IC mais que dobra na configuração de produção
+
+IC em T+21, choque acumulado 12-1, medido com e sem o termo setorial:
+
+| grafo | com `β₂·SETOR` | **sem** (versão final) | variação |
+|---|---|---|---|
+| manual (58 elos) | +0,0506 (t 2,45) | **+0,0621** (t 2,86) | +23% |
+| **regra mecânica (produção)** | +0,0130 (t 1,21) | **+0,0315** (t 2,82) | **+142%** |
+
+Na configuração que de fato roda, o sinal **mais que dobrou** — e passou de não-significante
+(t 1,21) para significante (t 2,82).
+
+> ⚠️ **Estes quatro números são da rodada de 16/08 (protótipo), anteriores à correção do calendário
+> (`1deffe1`), e não foram re-medidos.** Refazer o teste exige rodar o pipeline com o termo setorial
+> de volta, o que não foi feito. **Não são comparáveis dígito a dígito com o §2.2:** o IC em T+21 da
+> configuração final, medido no Bloco 7 depois da correção, é **+0,0225** — não +0,0315. O que este
+> quadro sustenta é o **sinal e a ordem de grandeza** da diferença (remover `β₂·SETOR` melhora muito
+> o sinal), não os valores absolutos.
+
+#### Três resultados que estavam soltos, e que essa mudança reconcilia de uma vez
+
+Antes de M0, o projeto tinha três achados que ninguém conseguia explicar juntos. Depois, todos os
+três viram consequência da mesma coisa.
+
+**1 · Por que `concorrente = +1` funcionou, se pré-registramos `−1`.**
+O pré-registro dizia *"a desgraça de um é a sorte do outro"* — Vale cai, CSN sobe. Os dados
+derrubaram: concorrentes **co-movem**, porque dependem do mesmo minério, do mesmo câmbio, do mesmo
+ciclo. **Essa exposição compartilhada é justamente o termo setorial.** Com `β₂·SETOR` na
+regressão, ela era removida do resíduo — então o `+1` não deveria funcionar, e não fazia sentido
+que funcionasse. Sem o termo, faz: o que se propaga é exatamente o pedaço comum.
+
+**2 · Por que controlar por SUBSETOR piorou (o teste `s13`).**
+A hipótese era que os 10 setores da B3 são grosseiros demais — "Materiais Básicos" junta minério,
+celulose, siderurgia e química — e que um controle mais fino deixaria o resíduo mais limpo.
+Mecanicamente funcionou (R² 0,358 → 0,401; correlação média dos choques −9%). Mas o resultado
+**piorou**: IC OOS +0,0091 → +0,0070, Sharpe OOS 0,50 → 0,14, e o baseline venceu os 7 limiares
+testados. Isso era um paradoxo enquanto se acreditava que o resíduo devia ser limpo. Vira óbvio
+depois de M0: **controle mais fino = mais sinal apagado.** Não era um limiar mal calibrado —
+era a direção inteira do raciocínio.
+
+**3 · Por que o placebo do mecanismo falhava no in-sample.**
+O placebo sorteia **qual nome do subsetor é a cabeça**. Se escolher pela liquidez carrega
+informação, o real tem que bater os sorteios. Com o termo setorial, não batia — e não batia porque
+**os dois lados eram ruído**: o resíduo tinha sido esvaziado do conteúdo comum, então tanto faz de
+quem você propaga o quê. Sem o termo, existe conteúdo de verdade no resíduo, e aí a pergunta "quem
+o carrega primeiro?" passa a ter resposta: **o nome líquido**. É o que o placebo mede hoje —
+3,7σ no in-sample, 3,0σ no out-of-sample, 5,1σ no total.
+
+> Os três só fecham juntos com M0. Um modelo que explica três anomalias independentes de uma vez é
+> mais forte que um que ganha IC — e é assim que a mudança deve ser defendida.
+
+#### O efeito colateral: um bug de hedge que desapareceu por construção
+
+Na regressão com dois regressores, o `β₁` do Ibovespa **não é o beta de mercado** — é um
+coeficiente **parcial**: "sensibilidade ao Ibovespa *já descontado o setor*". Como o índice
+setorial tem, ele mesmo, beta próximo de 1 contra o Ibovespa, os dois regressores disputam a mesma
+variação e o `β₁` fica artificialmente pequeno: **mediana 0,335**.
+
+E esse era o número que o Bloco 5 usava como razão de hedge. **O book estava sub-hedgeado por um
+fator de ~2,5×** — uma estratégia vendida como neutra carregando exposição de mercado não medida.
+
+Com um regressor só, o `β` volta a ser o beta de mercado de verdade e o bug some **por
+construção**, sem precisar de correção.
+
+⚠️ **Ressalva medida, e ela precisa ficar:** o β da versão final tem **mediana 0,82**, não ~1,0.
+O viés para baixo vem de negociação não-sincronizada nos 543 tickers (papel ilíquido não fecha no
+mesmo instante do índice, o que subestima a covariância). É o beta que o hedge usa, e ele
+funciona — correlação final com o Ibovespa de **−0,015** e beta de **−0,005**. Mas dizer que "é o
+beta de mercado puro" seria forte demais.
+
+#### O que M0 NÃO significa
+
+Não há conflito entre manter setor no choque e neutralizar setor na carteira. **São estágios
+diferentes:**
+
+| estágio | decisão | por quê |
+|---|---|---|
+| choque que **entra** | **mantém** o componente de setor | é a informação que difunde |
+| carteira que **sai** | trava de 25% por setor + hedge de beta | não queremos apostar no ramo nem na bolsa |
+
+Capturar a difusão dentro do ramo é o objetivo; ficar direcionalmente comprado no ramo é efeito
+colateral, e é combatido depois, na construção da carteira.
+
+#### Nota de honestidade: essa decisão quase foi tomada ao contrário
+
+Duas medições divergiram. O protótipo (regra mecânica, universo expandido) dizia que o choque
+só-mercado era **melhor**; um script de verificação independente dizia que era **pior**
+(+0,0547 → +0,0297 no grafo manual).
+
+**O script de verificação tinha um bug de tratamento de NaN que mascarava 46% dos dados.** Ele foi
+escrito por IA, e a IA **defendeu o resultado errado** quando confrontada. Só foi resolvido porque
+exigimos reprodução por um segundo agente independente, que encontrou o bug.
+
+É o exemplo mais caro do limite descrito na §6.4: **IA sem verificação vira viés automatizado.**
+Se tivéssemos aceitado a verificação, teríamos mantido o termo setorial — e o sinal de produção
+teria menos da metade da força que tem.
 
 ## 2.2 O horizonte
 
@@ -106,14 +231,23 @@ o Ibovespa: **−0,015**), mas dizer que "é o beta de mercado puro" seria forte
 
 | horizonte | T+1 | T+5 | T+21 | T+63 | T+126 |
 |---|---|---|---|---|---|
-| IC | +0,0074 | +0,0132 | +0,0219 | +0,0418 | +0,0457 |
-| **t** | **2,93** | **2,25** | 1,68 | 1,93 | 1,32 |
-| IC/√h | 0,0074 | 0,0059 | 0,0048 | 0,0053 | 0,0041 |
+| IC | +0,0076 | +0,0129 | +0,0225 | +0,0359 | +0,0389 |
+| **t** | **2,99** | **2,20** | 1,79 | 1,59 | 1,05 |
+| IC/√h | 0,0076 | 0,0058 | 0,0049 | 0,0045 | 0,0035 |
 
-**A tese original dizia T+1. Os dados dizem meses.** De T+1 a T+126, `IC/√h` cai **45%** — um
+**A tese original dizia T+1. Os dados dizem meses.** De T+1 a T+126, `IC/√h` cai **54%** — um
 efeito instantâneo cairia **91%**. O sinal acumula quase como difusão pura.
 
-⚠️ **Duas ressalvas:** `IC/√h` **não é constante** (cai 45%); e **só T+1 e T+5 têm t > 2**.
+⚠️ **Duas ressalvas:** `IC/√h` **não é constante** (cai 54%); e **só T+1 e T+5 têm t > 2**.
+
+> **Fonte única destes números:** `fase 7 - relatorio/saida/05_ic_por_horizonte.md`, gerado por
+> `r1_visuais.py` na mesma execução que produz a imagem acima.
+>
+> **Correção de 27/08/2026 — transcrição, não resultado.** A tabela que estava aqui (IC +0,0074 /
+> +0,0132 / +0,0219 / +0,0418 / +0,0457, com queda de 45%) era da rodada **anterior** à correção
+> dos 36 feriados-fantasma do calendário (commit `1deffe1`). A imagem se regenera a cada execução e
+> já mostrava os valores corretos; a tabela era digitada à mão e não foi redigitada junto — o §2.2
+> passou a se contradizer sozinho. Nenhum código, dado ou resultado mudou nesta correção.
 
 ## 2.3 O grafo mecânico
 
@@ -410,8 +544,9 @@ cabeça**:
 O real bate **todos** os sorteios em todas as janelas. **Escolher a cabeça pelo volume negociado
 carrega informação** — o mecanismo não é aleatório.
 
-*(Rodada com 12 sorteios; com 300 o p-valor fica preciso. O IC total de +0,0219 confere com o IC
-em T+21 medido de forma independente no Bloco 7.)*
+*(Rodada com 12 sorteios; com 300 o p-valor fica preciso. O IC total de +0,0219 desta tabela é
+da rodada anterior à correção do calendário e não foi re-medido; mesmo assim confere com o IC em
+T+21 do Bloco 7, medido de forma independente e já pós-correção: **+0,0225**.)*
 
 ---
 
@@ -511,7 +646,7 @@ valia a 5 bps**.
 **A IA errou, e errou de formas instrutivas:**
 
 1. **Escreveu um gráfico cuja legenda os próprios dados contradiziam** ("IC/√h é constante"
-   sobre uma curva que cai 45%). Foi pego **ao renderizar e olhar** — não por revisão de código.
+   sobre uma curva que cai 54%). Foi pego **ao renderizar e olhar** — não por revisão de código.
 2. **Introduziu um bug ao corrigir outro** — o `fillna(0)` do ADTV, que liquidava a carteira em
    dias de buraco de calendário. Só apareceu quando o custo realista tornou o giro caro.
 3. **Introduziu um bug num script de verificação** — mascarou 46% dos dados por tratamento errado
@@ -598,7 +733,7 @@ Auditoria dedicada encontrou dez afirmações indefensáveis no material anterio
 | alegação anterior | número correto |
 |---|---|
 | "Excesso sobre o CDI de +88,0%" | **+40,0%** com custo realista |
-| "IC/√h é constante — assinatura de difusão" | **cai 45%** |
+| "IC/√h é constante — assinatura de difusão" | **cai 54%** |
 | "O sinal paga o próprio giro" (por 0,1 bps) | **68,3 vs 36,6 bps** — folga de 1,87× |
 | "141 nomes/dia" | **mediana 134**; e **16,1** apostas independentes |
 | "O beta é o beta de mercado (~1,0)" | **mediana 0,82** |
